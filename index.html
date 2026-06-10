@@ -2068,66 +2068,49 @@ function refreshUpliftBoard() {
 
 async function loadCapturedRevenue() {
   try {
-    // Fetch all daily data to find the latest available date
-    const res = await fetch(`${SB_URL}/rest/v1/std_service_daily?select=day,revenue,transactions&clinic_id=eq.rosslyn&order=day.desc&limit=365`, {
+    // Single source: std_daily_kpis
+    const res = await fetch(`${SB_URL}/rest/v1/std_daily_kpis?clinic_id=eq.rosslyn&order=day.desc&limit=90`, {
       headers:{'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY}
     });
     if(!res.ok) throw new Error('Failed');
     const data = await res.json();
     if (data.length === 0) return;
 
-    // Find the latest date in the data
     const latestDay = data[0].day;
     const latestDate = new Date(latestDay + 'T12:00:00');
-
-    // Find 7 days before latest for "this week"
-    const weekBefore = new Date(latestDate);
-    weekBefore.setDate(weekBefore.getDate() - 7);
-    const weekBeforeStr = weekBefore.toISOString().split('T')[0];
-
-    // Find 14 days before for previous week comparison
-    const twoWeeksBefore = new Date(latestDate);
-    twoWeeksBefore.setDate(twoWeeksBefore.getDate() - 14);
-    const twoWeeksBeforeStr = twoWeeksBefore.toISOString().split('T')[0];
-
-    // Find month start of latest date
     const monthStart = latestDay.substring(0, 7) + '-01';
 
-    // 1. Yesterday's Revenue (= latest day)
-    // Aggregate all rows for the latest day (multiple services per day)
-    const latestDayRows = data.filter(r => r.day === latestDay);
-    const latestDayRev = latestDayRows.reduce((s,r) => s + parseFloat(r.revenue||0), 0);
+    // 1. Last Day Revenue
+    const lastRev = parseFloat(data[0].total_revenue || 0);
     const fmtDate = latestDate.toLocaleDateString('en-US', {month:'short', day:'numeric'});
-    document.getElementById('ub-yesterday-rev').textContent = latestDayRev > 0 ? '$' + latestDayRev.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) : '--';
+    document.getElementById('ub-yesterday-rev').textContent = lastRev > 0 ? '$' + lastRev.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) : '--';
     document.querySelector('#ub-yesterday-rev').closest('.uplift-card').querySelector('.uplift-card-sub').textContent = 'Revenue on ' + fmtDate;
 
-    // 2. Avg Transaction Value this week
-    const weekRows = data.filter(r => r.day >= weekBeforeStr);
-    const weekRevenue = weekRows.reduce((s,r) => s + parseFloat(r.revenue||0), 0);
-    const weekTxns = weekRows.reduce((s,r) => s + parseInt(r.transactions||0), 0);
-    const avgTxn = weekTxns > 0 ? weekRevenue / weekTxns : 0;
-    document.getElementById('ub-avg-txn').textContent = avgTxn > 0 ? '$' + avgTxn.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) : '--';
+    // 2. Avg Invoice Value (this week = last 7 days with data)
+    const week = data.slice(0, 7);
+    const prevWeek = data.slice(7, 14);
+    const weekInvCount = week.reduce((s,r) => s + (r.invoice_count||0), 0);
+    const weekRev = week.reduce((s,r) => s + parseFloat(r.total_revenue||0), 0);
+    const avgInv = weekInvCount > 0 ? weekRev / weekInvCount : 0;
+    document.getElementById('ub-avg-txn').textContent = avgInv > 0 ? '$' + avgInv.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) : '--';
 
     // Trend vs previous week
-    const prevWeekRows = data.filter(r => r.day >= twoWeeksBeforeStr && r.day < weekBeforeStr);
-    const prevRevenue = prevWeekRows.reduce((s,r) => s + parseFloat(r.revenue||0), 0);
-    const prevTxns = prevWeekRows.reduce((s,r) => s + parseInt(r.transactions||0), 0);
-    const prevAvg = prevTxns > 0 ? prevRevenue / prevTxns : 0;
-    if (prevAvg > 0 && avgTxn > 0) {
-      const pctChange = ((avgTxn - prevAvg) / prevAvg * 100).toFixed(1);
+    const prevInvCount = prevWeek.reduce((s,r) => s + (r.invoice_count||0), 0);
+    const prevRev = prevWeek.reduce((s,r) => s + parseFloat(r.total_revenue||0), 0);
+    const prevAvg = prevInvCount > 0 ? prevRev / prevInvCount : 0;
+    if (prevAvg > 0 && avgInv > 0) {
+      const pct = ((avgInv - prevAvg) / prevAvg * 100).toFixed(1);
       const el = document.getElementById('ub-avg-txn-trend');
-      const up = 'polyline points="23 6 13.5 15.5 8.5 10.5 1 18"';
-      const down = 'polyline points="23 18 13.5 8.5 8.5 13.5 1 6"';
-      if (pctChange >= 0) {
-        el.innerHTML = `<span style="color:var(--green)"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><${up}/></svg> +${pctChange}% vs prior week</span>`;
+      if (pct >= 0) {
+        el.innerHTML = `<span style="color:var(--green)">▲ +${pct}% vs prior week</span>`;
         document.getElementById('ub-avg-txn').style.color = 'var(--green)';
       } else {
-        el.innerHTML = `<span style="color:var(--red)"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><${down}/></svg> ${pctChange}% vs prior week</span>`;
+        el.innerHTML = `<span style="color:var(--red)">▼ ${pct}% vs prior week</span>`;
         document.getElementById('ub-avg-txn').style.color = 'var(--red)';
       }
     }
 
-    // 3. Extra Profit Captured this month
+    // 3. Extra Profit Captured this month (from campaign results)
     try {
       const campRes = await fetch(`${SB_URL}/rest/v1/std_campaign_results?select=captured_uplift,day&clinic_id=eq.rosslyn&day=gte.${monthStart}`, {
         headers:{'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY}
@@ -2137,22 +2120,15 @@ async function loadCapturedRevenue() {
         const captured = campData.reduce((s,r) => s + parseFloat(r.captured_uplift||0), 0);
         document.getElementById('ub-captured-month').textContent = captured > 0 ? '+$' + captured.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) : '$0';
       }
-    } catch(e) {}
+    } catch(e) { document.getElementById('ub-captured-month').textContent = '$0'; }
 
     // 4. New Clients this month
-    try {
-      const clientRes = await fetch(`${SB_URL}/rest/v1/std_clients?select=created_at&clinic_id=eq.rosslyn&created_at=gte.${monthStart}`, {
-        headers:{'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY}
-      });
-      if (clientRes.ok) {
-        const clients = await clientRes.json();
-        document.getElementById('ub-new-clients').textContent = clients.length.toLocaleString();
-      }
-    } catch(e) {}
+    const monthRows = data.filter(r => r.day >= monthStart);
+    const newClients = monthRows.reduce((s,r) => s + (r.new_clients||0), 0);
+    document.getElementById('ub-new-clients').textContent = newClients.toLocaleString();
 
     // 5. Total Revenue this month
-    const monthRows = data.filter(r => r.day >= monthStart);
-    const monthRev = monthRows.reduce((s,r) => s + parseFloat(r.revenue||0), 0);
+    const monthRev = monthRows.reduce((s,r) => s + parseFloat(r.total_revenue||0), 0);
     document.getElementById('ub-total-rev-month').textContent = monthRev > 0 ? '$' + Math.round(monthRev).toLocaleString() : '--';
     const monthLabel = latestDate.toLocaleDateString('en-US', {month:'long', year:'numeric'});
     document.querySelector('#ub-total-rev-month').closest('.uplift-card').querySelector('.uplift-card-sub').textContent = monthLabel;
