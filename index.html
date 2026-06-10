@@ -2078,6 +2078,2181 @@ function refreshUpliftBoard() {
 
 async function loadCapturedRevenue() {
   try {
+    // Fetch all daily data to find the latest available date
+    const res = await fetch(`${SB_URL}/rest/v1/std_service_daily?select=day,revenue,transactions&clinic_id=eq.rosslyn&order=day.desc&limit=365`, {
+      headers:{'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY}
+    });
+    if(!res.ok) throw new Error('Failed');
+    const data = await res.json();
+    if (data.length === 0) return;
+
+    // Find the latest date in the data
+    const latestDay = data[0].day;
+    const latestDate = new Date(latestDay + 'T12:00:00');
+
+    // Find 7 days before latest for "this week"
+    const weekBefore = new Date(latestDate);
+    weekBefore.setDate(weekBefore.getDate() - 7);
+    const weekBeforeStr = weekBefore.toISOString().split('T')[0];
+
+    // Find 14 days before for previous week comparison
+    const twoWeeksBefore = new Date(latestDate);
+    twoWeeksBefore.setDate(twoWeeksBefore.getDate() - 14);
+    const twoWeeksBeforeStr = twoWeeksBefore.toISOString().split('T')[0];
+
+    // Find month start of latest date
+    const monthStart = latestDay.substring(0, 7) + '-01';
+
+    // 1. Yesterday's Revenue (= latest day)
+    // Aggregate all rows for the latest day (multiple services per day)
+    const latestDayRows = data.filter(r => r.day === latestDay);
+    const latestDayRev = latestDayRows.reduce((s,r) => s + parseFloat(r.revenue||0), 0);
+    const fmtDate = latestDate.toLocaleDateString('en-US', {month:'short', day:'numeric'});
+    document.getElementById('ub-yesterday-rev').textContent = latestDayRev > 0 ? '$' + latestDayRev.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) : '--';
+    document.querySelector('#ub-yesterday-rev').closest('.uplift-card').querySelector('.uplift-card-sub').textContent = 'Revenue on ' + fmtDate;
+
+    // 2. Avg Transaction Value this week
+    const weekRows = data.filter(r => r.day >= weekBeforeStr);
+    const weekRevenue = weekRows.reduce((s,r) => s + parseFloat(r.revenue||0), 0);
+    const weekTxns = weekRows.reduce((s,r) => s + parseInt(r.transactions||0), 0);
+    const avgTxn = weekTxns > 0 ? weekRevenue / weekTxns : 0;
+    document.getElementById('ub-avg-txn').textContent = avgTxn > 0 ? '$' + avgTxn.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) : '--';
+
+    // Trend vs previous week
+    const prevWeekRows = data.filter(r => r.day >= twoWeeksBeforeStr && r.day < weekBeforeStr);
+    const prevRevenue = prevWeekRows.reduce((s,r) => s + parseFloat(r.revenue||0), 0);
+    const prevTxns = prevWeekRows.reduce((s,r) => s + parseInt(r.transactions||0), 0);
+    const prevAvg = prevTxns > 0 ? prevRevenue / prevTxns : 0;
+    if (prevAvg > 0 && avgTxn > 0) {
+      const pctChange = ((avgTxn - prevAvg) / prevAvg * 100).toFixed(1);
+      const el = document.getElementById('ub-avg-txn-trend');
+      const up = 'polyline points="23 6 13.5 15.5 8.5 10.5 1 18"';
+      const down = 'polyline points="23 18 13.5 8.5 8.5 13.5 1 6"';
+      if (pctChange >= 0) {
+        el.innerHTML = `<span style="color:var(--green)"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><${up}/></svg> +${pctChange}% vs prior week</span>`;
+        document.getElementById('ub-avg-txn').style.color = 'var(--green)';
+      } else {
+        el.innerHTML = `<span style="color:var(--red)"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><${down}/></svg> ${pctChange}% vs prior week</span>`;
+        document.getElementById('ub-avg-txn').style.color = 'var(--red)';
+      }
+    }
+
+    // 3. Extra Profit Captured this month
+    try {
+      const campRes = await fetch(`${SB_URL}/rest/v1/std_campaign_results?select=captured_uplift,day&clinic_id=eq.rosslyn&day=gte.${monthStart}`, {
+        headers:{'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY}
+      });
+      if (campRes.ok) {
+        const campData = await campRes.json();
+        const captured = campData.reduce((s,r) => s + parseFloat(r.captured_uplift||0), 0);
+        document.getElementById('ub-captured-month').textContent = captured > 0 ? '+$' + captured.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) : '$0';
+      }
+    } catch(e) {}
+
+    // 4. New Clients this month
+    try {
+      const clientRes = await fetch(`${SB_URL}/rest/v1/std_clients?select=created_at&clinic_id=eq.rosslyn&created_at=gte.${monthStart}`, {
+        headers:{'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY}
+      });
+      if (clientRes.ok) {
+        const clients = await clientRes.json();
+        document.getElementById('ub-new-clients').textContent = clients.length.toLocaleString();
+      }
+    } catch(e) {}
+
+    // 5. Total Revenue this month
+    const monthRows = data.filter(r => r.day >= monthStart);
+    const monthRev = monthRows.reduce((s,r) => s + parseFloat(r.revenue||0), 0);
+    document.getElementById('ub-total-rev-month').textContent = monthRev > 0 ? '$' + Math.round(monthRev).toLocaleString() : '--';
+    const monthLabel = latestDate.toLocaleDateString('en-US', {month:'long', year:'numeric'});
+    document.querySelector('#ub-total-rev-month').closest('.uplift-card').querySelector('.uplift-card-sub').textContent = monthLabel;
+
+    // 6. Profit Margin — disabled
+    document.getElementById('ub-profit-margin').textContent = '--';
+
+  } catch(e) {
+    console.error('Failed to load KPIs:', e);
+  }
+}!DOCTYPE html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>Vet INC - Business Dashboard</title><link rel="icon" href="data:," /><script src="https://cdn.jsdelivr.net/npm/chart.js"></script><style>
+ *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+ :root {
+ --bg: #f0f6ff;
+ --surface: #ffffff;
+ --surface2: #eff6ff;
+ --border: #dbeafe;
+ --primary: #2563eb;
+ --primary-light: #60a5fa;
+ --text: #1e3a5f;
+ --muted: #64748b;
+ --green: #16a34a;
+ --red: #ef4444;
+ --purple: #7c3aed;
+ --emerald: #059669;
+ --orange: #ea580c;
+ }
+
+ body {
+ background: var(--bg);
+ color: var(--text);
+ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+ min-height: 100vh;
+ font-size: 14px;
+ }
+
+ /* HEADER */
+ .header {
+ background: var(--surface);
+ border-bottom: 1px solid var(--border);
+ padding: 0 2rem;
+ display: flex;
+ align-items: center;
+ justify-content: space-between;
+ height: 60px;
+ position: sticky;
+ top: 0;
+ z-index: 200;
+ box-shadow: 0 1px 12px rgba(37,99,235,.07);
+ }
+ .header-left { display: flex; align-items: center; gap: 1rem; }
+ .logo-wrap { display: flex; align-items: center; gap: 10px; text-decoration: none; }
+ .logo-icon {
+ width: 34px; height: 34px;
+ background: linear-gradient(135deg, var(--primary), var(--primary-light));
+ border-radius: 9px;
+ display: flex; align-items: center; justify-content: center;
+ box-shadow: 0 2px 8px rgba(37,99,235,.25);
+ flex-shrink: 0;
+ }
+ .logo-text { font-size: 1.1rem; font-weight: 800; color: var(--text); }
+ .logo-text span { color: var(--primary); }
+ .header-divider { width: 1px; height: 24px; background: var(--border); }
+ .clinic-name { font-size: 0.82rem; color: var(--muted); font-weight: 500; }
+ .header-right { display: flex; align-items: center; gap: 0.75rem; }
+ .last-updated { font-size: 0.75rem; color: var(--muted); }
+ .btn-upload {
+ display: flex; align-items: center; gap: 6px;
+ background: var(--surface2); border: 1px solid var(--border);
+ color: var(--primary); font-size: 0.78rem; font-weight: 600;
+ padding: 6px 14px; border-radius: 8px; cursor: pointer;
+ transition: all 0.15s;
+ }
+ .btn-upload:hover { background: var(--primary); color: #fff; border-color: var(--primary); }
+
+ /* TAB NAV */
+ .tab-nav {
+ background: var(--surface);
+ border-bottom: 1px solid var(--border);
+ display: flex;
+ align-items: center;
+ padding: 0 2rem;
+ gap: 4px;
+ height: 52px;
+ }
+ .tab-btn {
+ display: flex; align-items: center; gap: 7px;
+ background: none; border: none;
+ color: var(--muted); cursor: pointer;
+ font-size: 0.85rem; font-weight: 600;
+ padding: 7px 16px; border-radius: 8px;
+ transition: all 0.15s; letter-spacing: 0.2px;
+ white-space: nowrap;
+ }
+ .tab-btn:hover { background: var(--surface2); color: var(--text); }
+ .tab-btn.active { background: var(--primary); color: #fff; }
+ .tab-btn .tab-icon { font-size: 0.95rem; }
+
+ .trust-banner{
+ background:linear-gradient(90deg,#eff6ff,#f8fbff);
+ border-bottom:1px solid var(--border);
+ padding:10px 2rem;
+ display:flex;
+ gap:14px;
+ align-items:center;
+ flex-wrap:wrap;
+ }
+ .trust-pill{font-size:.72rem;font-weight:700;color:var(--primary);background:#dbeafe;border:1px solid #bfdbfe;border-radius:999px;padding:4px 10px;letter-spacing:.02em}
+ .trust-copy{font-size:.82rem;color:var(--text);font-weight:600}
+ .trust-copy .muted{color:var(--muted);font-weight:500}
+
+ /* SECTIONS */
+ .section { display: none; padding: 2rem; animation: fadeIn 0.2s ease; }
+ .section.active { display: block; }
+ .section.full-h { display: none; padding: 0; }
+ .section.full-h.active { display: flex; }
+ @keyframes pulseBtn {
+  0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(37,99,235,0.4); }
+  50% { transform: scale(1.04); box-shadow: 0 0 0 8px rgba(37,99,235,0); }
+}
+.c4-plan-pulse { animation: pulseBtn 1.5s ease-in-out infinite; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+
+ /* LOADING */
+ .loading {
+ display: flex; align-items: center; justify-content: center;
+ height: 200px; color: var(--muted); gap: 0.75rem;
+ }
+ .spinner {
+ width: 20px; height: 20px;
+ border: 2px solid var(--border);
+ border-top-color: var(--primary);
+ border-radius: 50%;
+ animation: spin 0.8s linear infinite;
+ }
+ @keyframes spin { to { transform: rotate(360deg); } }
+
+ /* KPI CARDS */
+ .kpi-grid {
+ display: grid;
+ grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+ gap: 1rem; margin-bottom: 2rem;
+ }
+ .kpi-card {
+ background: var(--surface); border: 1px solid var(--border);
+ border-radius: 14px; padding: 1.4rem 1.5rem;
+ position: relative; overflow: hidden;
+ transition: box-shadow 0.2s, transform 0.2s;
+ }
+ .kpi-card:hover { box-shadow: 0 8px 28px rgba(37,99,235,.11); transform: translateY(-2px); }
+ .kpi-card::before {
+ content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+ background: linear-gradient(90deg, var(--primary), var(--primary-light));
+ }
+ .kpi-label { font-size: 0.68rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 0.6rem; }
+ .kpi-value { font-size: 1.75rem; font-weight: 900; color: var(--text); line-height: 1.1; }
+ .kpi-sub { font-size: 0.76rem; color: var(--muted); margin-top: 0.35rem; }
+ .kpi-delta { font-size: 0.8rem; font-weight: 700; margin-top: 0.35rem; }
+ .kpi-delta.up { color: var(--green); }
+ .kpi-delta.down { color: var(--red); }
+
+ /* CHARTS */
+ .chart-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 2rem; }
+ .chart-grid.full { grid-template-columns: 1fr; }
+ .chart-card {
+ background: var(--surface); border: 1px solid var(--border);
+ border-radius: 14px; padding: 1.4rem 1.5rem;
+ box-shadow: 0 2px 12px rgba(37,99,235,.04);
+ }
+ .chart-title { font-size: 0.7rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 1.1rem; }
+ .chart-container { position: relative; }
+ .chart-container.bar-lg { height: 280px; }
+ .chart-container.donut { height: 260px; }
+ .chart-container.hbar { height: 320px; }
+
+ /* TABLES */
+ .table-card {
+ background: var(--surface); border: 1px solid var(--border);
+ border-radius: 14px; overflow: hidden; margin-bottom: 2rem;
+ box-shadow: 0 2px 12px rgba(37,99,235,.04);
+ }
+ .table-header {
+ padding: 1rem 1.5rem; display: flex; align-items: center;
+ justify-content: space-between; border-bottom: 1px solid var(--border);
+ background: var(--surface2);
+ }
+ .table-header-title { font-size: 0.7rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+ .table-meta { font-size: 0.74rem; color: var(--muted); }
+ .table-scroll { overflow-x: auto; }
+ table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+ thead th {
+ background: #f8faff; color: var(--muted);
+ font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em;
+ padding: 0.75rem 1rem; text-align: left; white-space: nowrap; border-bottom: 1px solid var(--border);
+ }
+ thead th.num { text-align: right; }
+ tbody tr { border-bottom: 1px solid rgba(219,234,254,0.7); transition: background 0.12s; }
+ tbody tr:nth-child(even) { background: rgba(240,246,255,0.5); }
+ tbody tr:last-child { border-bottom: none; }
+ tbody tr:hover { background: var(--surface2) !important; }
+ tbody td { padding: 0.7rem 1rem; color: var(--text); }
+ tbody td.num { text-align: right; font-variant-numeric: tabular-nums; }
+ tbody td.muted { color: var(--muted); }
+ tbody td.green { color: var(--green); font-weight: 700; }
+ tbody td.red { color: var(--red); font-weight: 700; }
+ tbody td.blue { color: var(--primary); font-weight: 700; }
+ .rank { color: var(--muted); font-size: 0.75rem; font-weight: 500; }
+
+ /* CAMPAIGN CARDS */
+ .campaign-card {
+ background: var(--surface); border: 1px solid var(--border);
+ border-radius: 16px; margin-bottom: 1.75rem; overflow: hidden;
+ box-shadow: 0 2px 16px rgba(37,99,235,.05);
+ transition: box-shadow 0.2s;
+ }
+ .campaign-card:hover { box-shadow: 0 6px 28px rgba(37,99,235,.09); }
+
+ .campaign-header {
+ padding: 1.4rem 1.75rem;
+ display: flex; align-items: flex-start; gap: 1rem;
+ border-bottom: 1px solid var(--border);
+ position: relative;
+ }
+ .campaign-header::before {
+ content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px;
+ border-radius: 0;
+ }
+ .c-blue .campaign-header::before { background: var(--primary); }
+ .c-purple .campaign-header::before { background: var(--purple); }
+ .c-emerald .campaign-header::before { background: var(--emerald); }
+ .c-orange .campaign-header::before { background: var(--orange); }
+
+ .campaign-icon {
+ width: 44px; height: 44px; border-radius: 11px; flex-shrink: 0;
+ display: flex; align-items: center; justify-content: center; font-size: 1.25rem;
+ }
+ .c-blue .campaign-icon { background: rgba(37,99,235,.1); }
+ .c-purple .campaign-icon { background: rgba(124,58,237,.1); }
+ .c-emerald .campaign-icon { background: rgba(5,150,105,.1); }
+ .c-orange .campaign-icon { background: rgba(234,88,12,.1); }
+
+ .campaign-meta { flex: 1; }
+ .campaign-title { font-size: 1rem; font-weight: 800; color: var(--text); margin-bottom: 0.3rem; }
+ .campaign-desc { font-size: 0.83rem; color: var(--muted); line-height: 1.65; }
+ .campaign-badge {
+ display: inline-flex; align-items: center; gap: 0.35rem;
+ border-radius: 20px; padding: 0.3rem 0.9rem;
+ font-size: 0.7rem; font-weight: 700; margin-top: 0.6rem;
+ letter-spacing: 0.03em;
+ }
+ .c-blue .campaign-badge { background: rgba(37,99,235,.08); color: var(--primary); border: 1px solid rgba(37,99,235,.2); }
+ .c-purple .campaign-badge { background: rgba(124,58,237,.08); color: var(--purple); border: 1px solid rgba(124,58,237,.2); }
+ .c-emerald .campaign-badge { background: rgba(5,150,105,.08); color: var(--emerald); border: 1px solid rgba(5,150,105,.2); }
+ .c-orange .campaign-badge { background: rgba(234,88,12,.08); color: var(--orange); border: 1px solid rgba(234,88,12,.2); }
+
+ .campaign-body { padding: 0; overflow: hidden; max-height: 0; transition: max-height 0.35s ease; }
+ .campaign-body.open { max-height: 9999px; }
+ .campaign-toggle {
+ display: flex; align-items: center; justify-content: center; gap: 6px;
+ width: 100%; background: none; border: none; border-top: 1px solid var(--border);
+ padding: 0.65rem 1.5rem; cursor: pointer; font-size: 0.78rem; font-weight: 700;
+ color: var(--primary); font-family: inherit; transition: background 0.15s;
+ }
+ .campaign-toggle:hover { background: var(--surface2); }
+ .campaign-toggle .toggle-arrow { transition: transform 0.25s; display: inline-block; }
+ .campaign-toggle.open .toggle-arrow { transform: rotate(180deg); }
+
+ /* Campaign table col colors */
+ .c-blue tbody td.blue { color: var(--primary); }
+ .c-purple tbody td.blue { color: var(--purple); }
+ .c-emerald tbody td.blue { color: var(--emerald); }
+ .c-orange tbody td.blue { color: var(--orange); }
+
+ /* CAMPAIGN TRACKING v1.1 */
+ .campaign-status { display: flex; align-items: center; gap: 0.75rem; margin-top: 0.6rem; flex-wrap: wrap; }
+ .campaign-status .badge { display: inline-flex; align-items: center; gap: 0.3rem; border-radius: 20px; padding: 0.3rem 0.9rem; font-size: 0.7rem; font-weight: 700; letter-spacing: 0.03em; }
+ .campaign-status .badge.inactive { background: #f1f5f9; color: #64748b; border: 1px solid #e2e8f0; }
+ .campaign-status .badge.active { background: rgba(22,163,74,.1); color: #16a34a; border: 1px solid rgba(22,163,74,.25); }
+ .campaign-status .badge.paused { background: rgba(234,88,12,.1); color: #ea580c; border: 1px solid rgba(234,88,12,.25); }
+ 
+ .campaign-progress { display: flex; align-items: center; gap: 0.75rem; margin-top: 0.5rem; }
+ .progress-bar-wrap { flex: 1; max-width: 200px; }
+ .progress-bar { height: 6px; background: #e2e8f0; border-radius: 3px; overflow: hidden; }
+ .progress-bar .fill { height: 100%; background: linear-gradient(90deg, #16a34a, #22c55e); border-radius: 3px; transition: width 0.5s ease; }
+ .progress-label { font-size: 0.72rem; color: var(--muted); white-space: nowrap; }
+ 
+ .btn-activate { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.4rem 0.9rem; border-radius: 6px; font-size: 0.75rem; font-weight: 700; border: none; cursor: pointer; transition: all 0.15s; }
+ .btn-activate.primary { background: linear-gradient(135deg, var(--primary), var(--primary-light)); color: #fff; }
+ .btn-activate.primary:hover { box-shadow: 0 4px 12px rgba(37,99,235,.35); transform: translateY(-1px); }
+ .btn-activate.secondary { background: #f1f5f9; color: #475569; border: 1px solid #e2e8f0; }
+ .btn-activate.secondary:hover { background: #e2e8f0; }
+ .btn-activate.success { background: linear-gradient(135deg, #16a34a, #22c55e); color: #fff; }
+ 
+ .btn-analytics { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.45rem 0.85rem; border-radius: 10px; font-size: 0.72rem; font-weight: 700; background: var(--primary); color: #fff; border: none; cursor: pointer; transition: all 0.15s; }
+ .btn-analytics:hover { filter: brightness(1.1); }
+ 
+ /* Campaign Analytics Modal */
+ .modal-overlay { position: fixed; inset: 0; background: rgba(15,23,42,.4); backdrop-filter: blur(4px); z-index: 999; display: flex; align-items: center; justify-content: center; opacity: 0; pointer-events: none; transition: opacity 0.2s; }
+ .modal-overlay.open { opacity: 1; pointer-events: all; }
+ .modal-content { background: #fff; border-radius: 16px; box-shadow: 0 25px 50px rgba(0,0,0,.25); width: 90%; max-width: 900px; max-height: 85vh; overflow: hidden; display: flex; flex-direction: column; transform: translateY(20px); transition: transform 0.25s; }
+ .modal-overlay.open .modal-content { transform: translateY(0); }
+ .modal-header { padding: 1.25rem 1.5rem; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+ .modal-header h2 { font-size: 1.1rem; font-weight: 700; color: var(--text); }
+ .modal-close { width: 32px; height: 32px; border-radius: 8px; border: none; background: #f1f5f9; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 1.2rem; color: #64748b; transition: all 0.15s; }
+ .modal-close:hover { background: #e2e8f0; color: #1e293b; }
+ .modal-body { padding: 1.5rem; overflow-y: auto; flex: 1; }
+ .modal-footer { padding: 1rem 1.5rem; border-top: 1px solid var(--border); display: flex; gap: 0.75rem; justify-content: flex-end; background: #f8fafc; }
+ 
+ .analytics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
+ .stat-card { background: linear-gradient(135deg, #f8fafc, #f1f5f9); border-radius: 12px; padding: 1rem; border: 1px solid #e2e8f0; }
+ .stat-card .label { font-size: 0.7rem; font-weight: 600; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.35rem; }
+ .stat-card .value { font-size: 1.5rem; font-weight: 800; color: #1e293b; }
+ .stat-card .sub { font-size: 0.72rem; color: #64748b; margin-top: 0.25rem; }
+ .stat-card.success .value { color: #16a34a; }
+ .stat-card.warning .value { color: #ea580c; }
+ 
+ .chart-wrap { background: #f8fafc; border-radius: 12px; padding: 1rem; border: 1px solid #e2e8f0; margin-bottom: 1.5rem; }
+ .chart-title { font-size: 0.8rem; font-weight: 700; color: #1e293b; margin-bottom: 0.75rem; }
+ 
+ .items-list { max-height: 300px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; }
+ .items-list-header { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr auto; gap: 0.5rem; padding: 0.75rem 1rem; background: #f1f5f9; font-size: 0.7rem; font-weight: 700; color: #64748b; text-transform: uppercase; position: sticky; top: 0; }
+ .items-list-row { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr auto; gap: 0.5rem; padding: 0.6rem 1rem; border-bottom: 1px solid #f1f5f9; font-size: 0.8rem; align-items: center; }
+ .items-list-row:hover { background: #f8fafc; }
+ .items-list-row .status-badge { display: inline-flex; align-items: center; gap: 0.25rem; padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.68rem; font-weight: 600; }
+ .items-list-row .status-badge.implemented { background: rgba(22,163,74,.1); color: #16a34a; }
+ .items-list-row .status-badge.pending { background: #f1f5f9; color: #64748b; }
+ .items-list-row .status-badge.skipped { background: rgba(239,68,68,.1); color: #ef4444; }
+
+ /* CAMPAIGN FILTER BUTTONS */
+ .c1-filter {
+ background: var(--surface); border: 1px solid var(--border); color: var(--muted);
+ border-radius: 6px; padding: 4px 12px; font-size: 0.75rem; font-weight: 600;
+ cursor: pointer; transition: all 0.15s; font-family: inherit;
+ }
+ .c1-filter:hover { border-color: var(--primary); color: var(--primary); }
+ .c1-filter.active { background: var(--primary); border-color: var(--primary); color: #fff; }
+
+ /* STAT BAR */
+ .stat-bar-item { display: flex; flex-direction: column; gap: 2px; min-width: 120px; }
+ .stat-bar-label { font-size: 0.65rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .07em; }
+ .stat-bar-value { font-size: 1.1rem; font-weight: 900; color: var(--text); }
+ .stat-bar-sub { font-size: 0.72rem; color: var(--muted); }
+
+ /* MARGIN PILLS */
+ .margin-pill { display: inline-flex; align-items: center; font-size: 0.75rem; font-weight: 700; padding: 2px 8px; border-radius: 5px; }
+ .margin-low { background: rgba(239,68,68,.1); color: var(--red); }
+ .margin-ok { background: rgba(22,163,74,.1); color: var(--green); }
+
+ /* PAIRING GRID (C4) */
+ .pairing-grid {
+ display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+ gap: 1rem; padding: 1.5rem 1.75rem;
+ }
+ .pairing-item {
+ background: var(--surface2); border: 1px solid var(--border);
+ border-radius: 12px; padding: 1rem 1.25rem;
+ transition: all 0.2s; position: relative; overflow: hidden;
+ }
+ .pairing-item::before {
+ content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+ background: linear-gradient(90deg, var(--orange), #fbbf24);
+ }
+ .pairing-item:hover { box-shadow: 0 4px 14px rgba(234,88,12,.1); transform: translateY(-1px); }
+ .pairing-cats { font-size: 0.85rem; font-weight: 700; color: var(--text); margin-bottom: 0.25rem; line-height: 1.3; }
+ .pairing-cats .plus { color: var(--orange); margin: 0 4px; }
+ .pairing-count { font-size: 0.74rem; color: var(--muted); margin-bottom: 0.6rem; }
+ .pairing-bar { height: 4px; background: var(--border); border-radius: 3px; }
+ .pairing-bar-fill { height: 100%; background: linear-gradient(90deg, var(--orange), #fbbf24); border-radius: 3px; }
+ .pairing-pct { font-size: 0.7rem; font-weight: 800; color: var(--orange); float: right; margin-top: -1.3rem; }
+
+ /* AI ASSISTANT  CHAT UI */
+ /*  AI CHAT  Claude-style  */
+ #tab-ai {
+   height: calc(100vh - 112px);
+   display: none;
+   flex-direction: column;
+   background: #ffffff;
+ }
+ #tab-ai.active { display: flex; }
+
+ /* Slim status bar at top */
+ .ai-chat-header {
+   background: #fff;
+   border-bottom: 1px solid var(--border);
+   padding: 0.6rem 1.5rem;
+   display: flex;
+   align-items: center;
+   justify-content: space-between;
+   flex-shrink: 0;
+ }
+ .ai-chat-header-left { display: flex; align-items: center; gap: 10px; }
+ .ai-chat-avatar {
+   width: 28px; height: 28px; border-radius: 6px;
+   background: linear-gradient(135deg, var(--primary), var(--primary-light));
+   display: flex; align-items: center; justify-content: center;
+   color: white; font-weight: 800; font-size: 0.72rem; flex-shrink: 0;
+ }
+ .ai-chat-name { font-weight: 600; font-size: 0.88rem; color: var(--text); }
+ .ai-chat-status { font-size: 0.72rem; color: var(--muted); }
+ .ai-chat-indicators { display: flex; gap: 1rem; align-items: center; }
+ .ai-status-item { display: flex; align-items: center; gap: 5px; font-size: 0.7rem; color: var(--muted); }
+ .ai-data-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--border); vertical-align: middle; }
+ .ai-data-dot.loaded { background: var(--green); }
+
+ /* Messages area */
+ .ai-messages {
+   flex: 1; overflow-y: auto;
+   padding: 2rem 1rem 1rem;
+   max-width: 760px; width: 100%; margin: 0 auto;
+   display: flex; flex-direction: column; gap: 0;
+   box-sizing: border-box;
+ }
+
+ .msg-row {
+   display: flex;
+   gap: 0;
+   animation: fadeIn 0.18s ease;
+   padding: 0.25rem 0;
+ }
+ .msg-row.user { flex-direction: row-reverse; margin-bottom: 0.5rem; }
+ .msg-row.ai { margin-bottom: 0.75rem; }
+ .msg-meta { display: flex; flex-direction: column; width: 100%; }
+ .msg-row.user .msg-meta { align-items: flex-end; }
+ .msg-time { font-size: 0.62rem; color: var(--muted); padding: 2px 4px; margin-top: 3px; }
+
+ /* No avatar for user, small icon for AI */
+ .msg-avatar { display: none; }
+ .msg-row.ai .msg-meta::before {
+   content: 'Vet INC AI';
+   font-size: 0.72rem;
+   font-weight: 700;
+   color: var(--primary);
+   margin-bottom: 4px;
+   padding-left: 2px;
+ }
+
+ .msg-bubble {
+   font-size: 0.9rem;
+   line-height: 1.75;
+   color: var(--text);
+ }
+ .msg-bubble.ai {
+   background: transparent;
+   border: none;
+   padding: 0 2px;
+   max-width: 100%;
+ }
+ .msg-bubble.user {
+   background: #f0f6ff;
+   border: 1px solid #dbeafe;
+   color: var(--text);
+   padding: 0.7rem 1rem;
+   border-radius: 12px 12px 4px 12px;
+   max-width: 80%;
+   font-size: 0.88rem;
+ }
+ .msg-bubble table { font-size: 0.78rem; margin: 0.75rem 0; width: 100%; border-collapse: collapse; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+ .msg-bubble table th { background: #f8faff; color: var(--muted); font-size: 0.67rem; font-weight: 700; text-transform: uppercase; padding: 7px 10px; text-align: left; border-bottom: 1px solid var(--border); }
+ .msg-bubble table td { padding: 7px 10px; border-bottom: 1px solid rgba(219,234,254,0.5); }
+ .msg-bubble table tr:last-child td { border-bottom: none; }
+ .msg-bubble ul, .msg-bubble ol { padding-left: 1.4rem; margin: 0.5rem 0; }
+ .msg-bubble li { margin-bottom: 0.35rem; }
+ .msg-bubble p { margin-bottom: 0.6rem; }
+ .msg-bubble p:last-child { margin-bottom: 0; }
+ .msg-bubble strong { font-weight: 700; color: #0f172a; }
+ .msg-bubble h3 { font-size: 0.95rem; font-weight: 700; color: #0f172a; margin: 0.75rem 0 0.3rem; }
+
+ .followup-row { margin-top: 1rem; padding-top: 0.75rem; border-top: 1px solid var(--border); }
+ .followup-label { font-size: 0.67rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .07em; margin-bottom: 0.4rem; }
+ .followup-chips { display: flex; gap: 0.35rem; flex-wrap: wrap; }
+ .followup-chip { background: #fff; border: 1px solid var(--border); color: var(--primary); font-size: 0.76rem; padding: 5px 12px; border-radius: 20px; cursor: pointer; font-family: inherit; transition: all 0.12s; font-weight: 500; }
+ .followup-chip:hover { background: #eff6ff; border-color: var(--primary); }
+
+ /* Typing indicator */
+ .typing-indicator { display: flex; gap: 4px; align-items: center; padding: 6px 2px; }
+ .typing-dot { width: 6px; height: 6px; border-radius: 50%; background: #94a3b8; animation: typingBounce 1.2s infinite; }
+ .typing-dot:nth-child(2) { animation-delay: 0.2s; }
+ .typing-dot:nth-child(3) { animation-delay: 0.4s; }
+ @keyframes typingBounce {
+   0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+   30% { transform: translateY(-5px); opacity: 1; }
+ }
+
+ /* Suggestion chips  shown above input */
+ .ai-suggestions {
+   background: #fff;
+   border-top: 1px solid var(--border);
+   padding: 0.6rem 1.25rem;
+   display: flex; gap: 0.4rem;
+   overflow-x: auto; flex-shrink: 0;
+   justify-content: center;
+ }
+ .ai-suggestions::-webkit-scrollbar { display: none; }
+ .suggestion-chip {
+   background: #fff; border: 1px solid var(--border);
+   color: #374151; font-size: 0.76rem; padding: 6px 14px;
+   border-radius: 20px; cursor: pointer; white-space: nowrap;
+   transition: all 0.15s; font-family: inherit; font-weight: 500;
+ }
+ .suggestion-chip:hover { background: #eff6ff; border-color: var(--primary); color: var(--primary); }
+
+ /* Input bar  Claude-style large box with send icon inside */
+ .ai-input-wrapper {
+   background: #fff;
+   border-top: 1px solid var(--border);
+   padding: 1rem 1.5rem 1.25rem;
+   display: flex; justify-content: center; flex-shrink: 0;
+ }
+ .ai-input-inner {
+   position: relative;
+   width: 100%; max-width: 760px;
+ }
+ .ai-input {
+   width: 100%;
+   background: #fff;
+   border: 1.5px solid #d1d5db;
+   color: var(--text);
+   border-radius: 14px;
+   padding: 0.85rem 3.5rem 0.85rem 1.1rem;
+   font-size: 0.92rem;
+   font-family: inherit;
+   outline: none;
+   transition: border-color 0.15s, box-shadow 0.15s;
+   resize: none;
+   line-height: 1.5;
+   box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+ }
+ .ai-input:focus {
+   border-color: var(--primary);
+   box-shadow: 0 0 0 3px rgba(37,99,235,.08), 0 2px 8px rgba(0,0,0,0.06);
+ }
+ .ai-input::placeholder { color: #9ca3af; }
+ .ai-send {
+   position: absolute;
+   right: 10px;
+   bottom: 10px;
+   width: 34px; height: 34px;
+   background: var(--primary);
+   color: #fff; border: none;
+   border-radius: 9px;
+   cursor: pointer;
+   transition: all 0.15s;
+   display: flex; align-items: center; justify-content: center;
+   flex-shrink: 0;
+ }
+ .ai-send:hover { background: #1d4ed8; box-shadow: 0 2px 8px rgba(37,99,235,.3); }
+ .ai-send:disabled { background: #e2e8f0; color: #94a3b8; cursor: not-allowed; box-shadow: none; }
+
+ /* RESPONSIVE */
+ @media (max-width: 900px) {
+ .chart-grid { grid-template-columns: 1fr; }
+ .section { padding: 1rem; }
+ #tab-ai { height: calc(100vh - 112px); }
+ }
+ @media (max-width: 600px) {
+ .header { padding: 0 1rem; }
+ .tab-nav { padding: 0 1rem; overflow-x: auto; }
+ .header-divider, .clinic-name { display: none; }
+ }
+
+/*  WIDGET BOARD  */
+.widget-board-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 1rem;
+}
+.wb-title { font-size: 1.05rem; font-weight: 800; color: var(--text); }
+
+/* Edit / Done pill button */
+.btn-edit-widgets {
+  display: flex; align-items: center; gap: 6px;
+  background: rgba(100,116,139,0.1); color: var(--muted);
+  border: none; border-radius: 20px;
+  padding: 7px 18px; font-size: 0.82rem; font-weight: 700;
+  cursor: pointer; transition: all 0.18s; font-family: inherit;
+}
+.btn-edit-widgets:hover { background: rgba(100,116,139,0.18); }
+.btn-edit-widgets.done { background: var(--primary); color: #fff; }
+.btn-edit-widgets.done:hover { background: #1d4ed8; }
+
+/* Wallpaper-style board area */
+.widget-board-area {
+  background: linear-gradient(145deg, #e8f0fe 0%, #f0e8ff 100%);
+  border-radius: 20px;
+  padding: 14px;
+  margin-bottom: 1rem;
+}
+
+/* Widget grid  tighter iOS feel */
+.widget-board {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+@media (max-width: 1100px) { .widget-board { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 600px) { .widget-board { grid-template-columns: 1fr; } }
+
+/* Widget cards  frosted glass iOS depth */
+.widget-card {
+  background: rgba(255,255,255,0.84);
+  backdrop-filter: blur(20px) saturate(1.6);
+  -webkit-backdrop-filter: blur(20px) saturate(1.6);
+  border-radius: 22px;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.13), 0 1px 4px rgba(0,0,0,0.07);
+  border: none;
+  display: flex; flex-direction: column;
+  min-height: 140px;
+  transition: box-shadow 0.2s, transform 0.2s;
+  position: relative;
+  overflow: visible;
+}
+.widget-card[data-size="small"] { grid-column: span 1; border-radius: 18px; }
+.widget-card[data-size="medium"] { grid-column: span 2; }
+.widget-card[data-size="large"] { grid-column: span 4; }
+@media (max-width: 1100px) {
+  .widget-card[data-size="large"] { grid-column: span 2; }
+}
+@media (max-width: 600px) {
+  .widget-card[data-size="medium"],
+  .widget-card[data-size="large"] { grid-column: span 1; }
+}
+
+/* Entry animation */
+@keyframes widgetIn {
+  from { opacity: 0; transform: scale(0.92); }
+  to   { opacity: 1; transform: scale(1); }
+}
+.widget-card.entering {
+  animation: widgetIn 0.32s cubic-bezier(.34,1.4,.64,1) both;
+}
+
+/* Remove animation */
+@keyframes widgetOut {
+  to { opacity: 0; transform: scale(0.82); }
+}
+.widget-card.removing {
+  animation: widgetOut 0.22s ease forwards;
+  pointer-events: none;
+}
+
+/* Jiggle mode */
+@keyframes jiggle {
+  0%   { transform: rotate(0deg); }
+  25%  { transform: rotate(-0.6deg); }
+  75%  { transform: rotate(0.6deg); }
+  100% { transform: rotate(0deg); }
+}
+.widget-card.jiggling {
+  animation: jiggle 0.55s ease-in-out infinite;
+  cursor: grab;
+}
+.widget-card.jiggling:nth-child(even) { animation-delay: 0.08s; }
+.widget-card.dragging { opacity: 0.35; }
+.widget-card.drag-over {
+  outline: 2px solid rgba(37,99,235,0.45);
+  outline-offset: -2px;
+}
+
+/* iOS-style remove button (top-left, white circle, red minus) */
+.widget-ios-remove {
+  position: absolute; top: -7px; left: -7px; z-index: 10;
+  width: 22px; height: 22px; border-radius: 50%;
+  background: white; border: none; cursor: pointer;
+  box-shadow: 0 1px 5px rgba(0,0,0,0.25);
+  display: none; align-items: center; justify-content: center;
+  font-size: 16px; line-height: 1; color: #ef4444; font-weight: 900;
+  padding: 0; transition: transform 0.12s;
+}
+.widget-ios-remove:hover { transform: scale(1.18); }
+.widget-card.jiggling .widget-ios-remove { display: flex; }
+
+/* Widget header */
+.widget-header {
+  display: flex; align-items: center; gap: 8px;
+  padding: 13px 13px 0;
+}
+.widget-drag-handle {
+  color: rgba(0,0,0,0.35); cursor: grab; font-size: 1rem;
+  line-height: 1; flex-shrink: 0;
+  transition: opacity 0.15s; user-select: none;
+  display: none;
+}
+.widget-card.jiggling .widget-drag-handle { display: block; }
+.widget-drag-handle:active { cursor: grabbing; }
+.widget-title {
+  flex: 1; font-size: 11px; font-weight: 600;
+  color: rgba(0,0,0,0.42); text-transform: uppercase; letter-spacing: 0.06em;
+  line-height: 1.3;
+}
+.widget-actions { display: flex; gap: 2px; }
+.widget-btn {
+  background: none; border: none; cursor: pointer;
+  color: rgba(0,0,0,0.38); font-size: 0.82rem; padding: 3px 6px;
+  border-radius: 5px; line-height: 1;
+  font-family: inherit; opacity: 0; transition: opacity 0.15s, background 0.12s, color 0.12s;
+}
+.widget-card:hover .widget-btn { opacity: 1; }
+.widget-btn:hover { background: rgba(0,0,0,0.06); color: var(--text); }
+
+/* Widget body & footer */
+.widget-body {
+  flex: 1; padding: 10px 13px 6px;
+  display: flex; flex-direction: column;
+  overflow: hidden; border-radius: 0 0 22px 22px;
+}
+.widget-card[data-size="small"] .widget-body { border-radius: 0 0 18px 18px; }
+.widget-footer {
+  padding: 2px 13px 10px;
+  font-size: 0.62rem; color: rgba(0,0,0,0.3); font-style: italic;
+}
+
+/* Shimmer skeleton */
+@keyframes shimmer {
+  0% { background-position: -600px 0; }
+  100% { background-position: 600px 0; }
+}
+.shimmer {
+  background: linear-gradient(90deg, rgba(210,220,255,0.55) 25%, rgba(190,205,255,0.85) 50%, rgba(210,220,255,0.55) 75%);
+  background-size: 600px 100%;
+  animation: shimmer 1.4s infinite;
+  border-radius: 6px;
+}
+.widget-skeleton { display: flex; flex-direction: column; gap: 8px; padding: 4px 0; }
+.sk-line { height: 11px; }
+.sk-value { height: 40px; width: 55%; }
+.sk-chart { flex: 1; min-height: 120px; }
+
+/* Widget value typography  Apple-style */
+.w-value { font-size: 1.9rem; font-weight: 900; color: var(--text); line-height: 1.05; letter-spacing: -0.02em; }
+.w-sub { font-size: 12px; color: rgba(0,0,0,0.42); margin-top: 4px; }
+.w-delta { font-size: 0.8rem; font-weight: 700; margin-top: 4px; }
+.w-delta.up { color: var(--green); }
+.w-delta.down { color: var(--red); }
+.w-chart { position: relative; flex: 1; min-height: 160px; }
+.w-chart.sm { min-height: 110px; }
+.w-chart.lg { min-height: 240px; }
+.widget-error { color: var(--red); font-size: 0.78rem; display: flex; flex-direction: column; gap: 8px; padding: 4px 0; }
+.widget-error-retry {
+  background: none; border: 1px solid var(--red); color: var(--red);
+  border-radius: 6px; padding: 4px 12px; font-size: 0.76rem; cursor: pointer;
+  font-family: inherit; width: fit-content; transition: all 0.15s;
+}
+.widget-error-retry:hover { background: var(--red); color: white; }
+
+/* Floating Add Widget button (visible only in edit mode) */
+.btn-float-add-widget {
+  display: none;
+  position: fixed; bottom: 32px; left: 50%; transform: translateX(-50%);
+  background: white; color: #2563eb;
+  border: none; border-radius: 30px;
+  padding: 13px 30px; font-size: 0.9rem; font-weight: 700;
+  cursor: pointer; font-family: inherit;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.18), 0 1px 6px rgba(0,0,0,0.1);
+  z-index: 100; white-space: nowrap;
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+.btn-float-add-widget.visible { display: flex; align-items: center; gap: 7px; }
+.btn-float-add-widget:hover { transform: translateX(-50%) scale(1.04); box-shadow: 0 8px 32px rgba(0,0,0,0.2); }
+
+/* Add Widget bottom sheet */
+.widget-modal-overlay {
+  position: fixed; inset: 0; z-index: 999;
+  background: rgba(15,23,42,0.48); backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  display: flex; align-items: flex-end; justify-content: center;
+  opacity: 0; pointer-events: none; transition: opacity 0.25s;
+}
+.widget-modal-overlay.open { opacity: 1; pointer-events: all; }
+.widget-modal {
+  background: rgba(248,250,255,0.96);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border-radius: 20px 20px 0 0;
+  width: 100%; max-width: 800px;
+  padding: 0 20px 0;
+  max-height: 72vh; display: flex; flex-direction: column;
+  transform: translateY(100%);
+  transition: transform 0.38s cubic-bezier(.34,1.2,.64,1);
+  box-shadow: 0 -8px 48px rgba(0,0,0,0.18);
+}
+.widget-modal-overlay.open .widget-modal { transform: translateY(0); }
+
+/* iOS drag handle pill */
+.widget-modal-handle {
+  width: 36px; height: 4px; border-radius: 2px;
+  background: rgba(0,0,0,0.14);
+  margin: 12px auto 16px;
+  flex-shrink: 0;
+}
+.widget-modal-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 12px; flex-shrink: 0;
+}
+.widget-modal-title { font-size: 1rem; font-weight: 800; color: var(--text); }
+.widget-modal-close {
+  background: rgba(100,116,139,0.12); border: none;
+  width: 28px; height: 28px; border-radius: 50%;
+  cursor: pointer; font-size: 0.82rem; color: var(--muted);
+  display: flex; align-items: center; justify-content: center;
+  font-family: inherit; flex-shrink: 0; transition: all 0.15s;
+}
+.widget-modal-close:hover { background: var(--red); color: white; }
+.widget-modal-search {
+  width: 100%; background: rgba(0,0,0,0.05); border: none;
+  border-radius: 10px; padding: 9px 14px; font-size: 0.85rem;
+  font-family: inherit; color: var(--text); outline: none; margin-bottom: 12px;
+  flex-shrink: 0; transition: background 0.15s;
+}
+.widget-modal-search:focus { background: rgba(37,99,235,0.07); }
+.widget-modal-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 10px; overflow-y: auto; padding-bottom: 20px;
+}
+.catalog-card {
+  background: rgba(255,255,255,0.9);
+  border-radius: 16px; padding: 14px 14px 12px;
+  display: flex; flex-direction: column; gap: 5px;
+  transition: all 0.15s; cursor: default;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.07);
+}
+.catalog-card:hover { transform: scale(1.02); box-shadow: 0 4px 18px rgba(37,99,235,.14); }
+.catalog-card-name { font-size: 0.83rem; font-weight: 700; color: var(--text); line-height: 1.35; }
+.catalog-card-size {
+  display: inline-flex; align-items: center;
+  background: rgba(100,116,139,.1); color: var(--muted);
+  font-size: 0.62rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em;
+  padding: 2px 7px; border-radius: 4px; width: fit-content;
+}
+.catalog-card-size.large { background: rgba(37,99,235,.1); color: var(--primary); }
+.catalog-card-size.medium { background: rgba(124,58,237,.1); color: var(--purple); }
+.catalog-add {
+  background: var(--primary); color: white; border: none;
+  border-radius: 10px; padding: 7px 14px; font-size: 0.76rem; font-weight: 700;
+  cursor: pointer; font-family: inherit; margin-top: 6px;
+  transition: all 0.15s; width: 100%;
+}
+.catalog-add:hover:not(:disabled) { background: #1d4ed8; }
+.catalog-add:disabled { background: rgba(0,0,0,0.08); color: rgba(0,0,0,0.3); cursor: default; }
+.appt-list { display: flex; flex-direction: column; gap: 5px; margin-top: 4px; }
+.appt-item { font-size: 0.76rem; padding: 5px 8px; background: rgba(37,99,235,0.06); border-radius: 8px; border-left: 3px solid var(--primary); }
+.appt-time { font-weight: 700; color: var(--primary); }
+.appt-doc { color: var(--muted); }
+
+/*  SETTINGS TAB  */
+.settings-wrap { padding: 1.5rem 1.5rem 2rem; }
+.settings-page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem; }
+.settings-page-title { font-size: 1.2rem; font-weight: 900; color: var(--text); }
+.settings-page-sub { font-size: 0.8rem; color: var(--muted); margin-top: 2px; }
+.settings-layout { display: flex; flex-direction: column; gap: 1.5rem; max-width: 860px; margin: 0 auto; }
+.settings-card {
+  background: rgba(255,255,255,0.84);
+  backdrop-filter: blur(20px) saturate(1.6);
+  -webkit-backdrop-filter: blur(20px) saturate(1.6);
+  border-radius: 20px;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.10), 0 1px 4px rgba(0,0,0,0.06);
+  padding: 1.5rem 1.75rem;
+}
+.settings-card-title { font-size: 1rem; font-weight: 800; color: var(--text); margin-bottom: 0.2rem; }
+.settings-card-subtitle { font-size: 0.78rem; color: var(--muted); margin-bottom: 1.25rem; }
+.cost-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 0; border-bottom: 1px solid rgba(219,234,254,0.6);
+}
+.cost-row:last-of-type { border-bottom: none; }
+.cost-label-input {
+  flex: 1; border: none; background: transparent;
+  font-size: 0.9rem; color: var(--text); font-family: inherit; outline: none;
+  min-width: 0;
+}
+.cost-label-input:focus { color: var(--primary); }
+.cost-amount-input {
+  width: 120px; border: 1.5px solid var(--border); border-radius: 10px;
+  padding: 6px 10px; font-size: 0.9rem; font-family: inherit;
+  color: var(--text); background: #f8faff; text-align: right;
+  outline: none; transition: border-color 0.15s; flex-shrink: 0;
+}
+.cost-amount-input:focus { border-color: var(--primary); background: #fff; }
+.cost-delete-btn {
+  width: 28px; height: 28px; border-radius: 50%; border: none;
+  background: rgba(239,68,68,0.1); color: var(--red); cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.1rem; line-height: 1; transition: background 0.15s; flex-shrink: 0;
+}
+.cost-delete-btn:hover { background: rgba(239,68,68,0.2); }
+.settings-add-btn {
+  display: flex; align-items: center; gap: 6px;
+  background: rgba(37,99,235,0.08); color: var(--primary);
+  border: none; border-radius: 20px;
+  padding: 8px 18px; font-size: 0.82rem; font-weight: 700;
+  cursor: pointer; transition: background 0.15s; font-family: inherit;
+  margin-top: 0.85rem;
+}
+.settings-add-btn:hover { background: rgba(37,99,235,0.15); }
+.settings-total-row {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-top: 1rem; padding-top: 0.85rem;
+  border-top: 2px solid var(--border);
+}
+.settings-total-label { font-size: 1rem; font-weight: 800; color: var(--text); }
+.settings-total-amount { font-size: 1.25rem; font-weight: 900; color: var(--primary); }
+.settings-save-indicator {
+  font-size: 0.75rem; color: var(--green); font-weight: 600;
+  opacity: 0; transition: opacity 0.4s;
+}
+.settings-save-indicator.visible { opacity: 1; }
+
+/*  Insights Widget Dashboard  */
+.iw-wrap { padding: 2rem; max-width: 1200px; margin: 0 auto; }
+.iw-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1.5rem;
+}
+@media (max-width: 900px) { .iw-grid { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 600px) { .iw-grid { grid-template-columns: 1fr; } }
+.iw-card {
+  background: var(--surface);
+  border: 1px solid #dbeafe;
+  border-radius: 16px;
+  padding: 1.5rem;
+  cursor: pointer;
+  transition: transform 0.18s, box-shadow 0.18s;
+  display: flex; flex-direction: column; gap: 0;
+  position: relative;
+}
+.iw-card:hover { transform: translateY(-2px); box-shadow: 0 8px 32px rgba(37,99,235,.13); }
+.iw-card-label {
+  font-size: 0.68rem; font-weight: 800; text-transform: uppercase;
+  letter-spacing: 0.1em; color: var(--muted); margin-bottom: 0.9rem;
+}
+.iw-big-number {
+  font-size: 2.5rem; font-weight: 900; line-height: 1;
+  margin-bottom: 1rem;
+}
+.iw-substats {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem;
+  margin-bottom: 1.1rem; flex: 1;
+}
+.iw-stat { background: var(--surface2); border-radius: 10px; padding: 0.55rem 0.75rem; }
+.iw-stat-label { font-size: 0.68rem; color: var(--muted); margin-bottom: 3px; }
+.iw-stat-value { font-size: 0.95rem; font-weight: 800; color: var(--text); }
+.iw-view-link {
+  font-size: 0.8rem; font-weight: 700; color: var(--primary);
+  text-decoration: none; margin-top: auto;
+  display: inline-block;
+}
+/* Drawer */
+.iw-drawer-backdrop {
+  display: none; position: fixed; inset: 0;
+  background: rgba(15,23,42,0.35); z-index: 1000;
+  backdrop-filter: blur(2px);
+}
+.iw-drawer-backdrop.open { display: block; }
+.iw-drawer {
+  position: fixed; top: 0; right: 0; bottom: 0; width: 480px;
+  max-width: 100vw;
+  background: var(--surface); z-index: 1001;
+  box-shadow: -4px 0 40px rgba(15,23,42,.18);
+  transform: translateX(100%); transition: transform 0.28s cubic-bezier(.4,0,.2,1);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+.iw-drawer.open { transform: translateX(0); }
+.iw-drawer-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 1.25rem 1.5rem; border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.iw-drawer-title { font-size: 1rem; font-weight: 800; color: var(--text); }
+.iw-drawer-close {
+  background: none; border: none; cursor: pointer; padding: 4px;
+  color: var(--muted); font-size: 1.1rem; line-height: 1;
+  border-radius: 6px; transition: background 0.15s;
+}
+.iw-drawer-close:hover { background: var(--surface2); color: var(--text); }
+.iw-drawer-body {
+  flex: 1; overflow-y: auto; padding: 1.5rem;
+}
+/* Drawer internals */
+.iw-section-title {
+  font-size: 0.7rem; font-weight: 800; text-transform: uppercase;
+  letter-spacing: 0.08em; color: var(--muted); margin: 1.25rem 0 0.6rem;
+}
+.iw-section-title:first-child { margin-top: 0; }
+.iw-cost-row {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 6px 0; border-bottom: 1px solid rgba(219,234,254,0.5);
+}
+.iw-cost-row:last-child { border-bottom: none; }
+.iw-cost-name { flex: 1; font-size: 0.86rem; color: var(--text); }
+.iw-cost-input {
+  width: 100px; padding: 4px 8px; border: 1px solid var(--border);
+  border-radius: 6px; font-size: 0.86rem; font-weight: 700;
+  color: var(--text); text-align: right; background: var(--surface2);
+  transition: border 0.15s;
+}
+.iw-cost-input:focus { outline: none; border-color: var(--primary); background: #fff; }
+.iw-cost-daily { font-size: 0.78rem; color: var(--muted); min-width: 56px; text-align: right; }
+.iw-total-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 0.75rem 0; font-weight: 800; font-size: 0.9rem;
+  border-top: 2px solid var(--border); margin-top: 0.5rem;
+}
+.iw-day-row {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 7px 0; border-bottom: 1px solid rgba(219,234,254,0.4);
+  font-size: 0.84rem;
+}
+.iw-day-row:last-child { border-bottom: none; }
+.iw-day-date { width: 72px; color: var(--muted); flex-shrink: 0; }
+.iw-day-rev { width: 80px; text-align: right; font-weight: 700; color: var(--text); flex-shrink: 0; }
+.iw-day-cost { width: 80px; text-align: right; color: var(--muted); flex-shrink: 0; }
+.iw-day-net { width: 80px; text-align: right; font-weight: 800; flex-shrink: 0; }
+.iw-day-net.pos { color: var(--green); }
+.iw-day-net.neg { color: var(--red); }
+.iw-day-note { font-size: 0.74rem; color: var(--muted); font-style: italic; }
+/* Revenue bar */
+.iw-rev-bar-wrap { display: flex; align-items: center; gap: 0.75rem; padding: 5px 0; border-bottom: 1px solid rgba(219,234,254,0.4); font-size: 0.82rem; }
+.iw-rev-bar-wrap:last-child { border-bottom: none; }
+.iw-rev-bar-date { width: 68px; color: var(--muted); flex-shrink: 0; }
+.iw-rev-bar-track { flex: 1; height: 10px; background: #eff6ff; border-radius: 5px; overflow: hidden; }
+.iw-rev-bar-fill { height: 100%; border-radius: 5px; background: linear-gradient(90deg, var(--primary), var(--primary-light)); transition: width 0.3s; }
+.iw-rev-bar-val { width: 72px; text-align: right; font-weight: 700; color: var(--text); flex-shrink: 0; }
+/* Metric row in drawer */
+.iw-metric-row {
+  display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.75rem; margin-bottom: 1.25rem;
+}
+.iw-metric {
+  background: var(--surface2); border-radius: 12px; padding: 0.75rem 0.9rem; text-align: center;
+}
+.iw-metric-label { font-size: 0.68rem; color: var(--muted); margin-bottom: 4px; }
+.iw-metric-value { font-size: 1rem; font-weight: 900; color: var(--text); }
+.iw-save-note { font-size: 0.72rem; color: var(--green); font-weight: 600; height: 1.1rem; margin-top: 0.5rem; }
+
+.insight-inbox{background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:12px;margin-bottom:14px;}
+.insight-item{border:1px solid #e2e8f0;border-radius:10px;padding:10px;margin-top:8px;background:#f8fafc;}
+.insight-title{font-weight:700;color:#1e3a8a;font-size:.9rem;}
+.insight-body{color:#475569;font-size:.85rem;margin-top:4px;}
+.insight-actions{margin-top:6px;display:flex;gap:8px;flex-wrap:wrap;}
+.insight-detail{display:none;margin-top:8px;background:#fff;border:1px dashed #e2e8f0;border-radius:8px;padding:8px;font-size:.85rem;color:#475569;}
+.insight-item.open .insight-detail{display:block;}
+.insight-pill{display:inline-block;padding:.2rem .5rem;border-radius:999px;font-weight:700;font-size:.72rem;background:#eef2ff;color:#4338ca;}
+
+
+.campaign-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;}
+.campaign-card{background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:14px;box-shadow:0 8px 20px rgba(15,23,42,.06);}
+.campaign-title{font-weight:800;color:#1e3a8a;}
+.campaign-meta{color:#64748b;font-size:.85rem;margin-top:4px;}
+.campaign-body{margin-top:8px;color:#475569;font-size:.9rem;}
+.campaign-metrics{display:flex;gap:12px;margin-top:10px;font-size:.85rem;color:#1e3a8a;font-weight:700;}
+
+
+.queue{display:grid;gap:8px;}
+.queue-item{display:flex;justify-content:space-between;align-items:center;padding:6px 8px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;font-size:.85rem;}
+.queue-actions{display:flex;gap:6px;}
+.queue-actions .approve{background:#22c55e;color:#fff;border:none;border-radius:6px;padding:4px 8px;font-size:.75rem;}
+.queue-actions .reject{background:#ef4444;color:#fff;border:none;border-radius:6px;padding:4px 8px;font-size:.75rem;}
+.campaign-btn{background:#2563eb;color:#fff;border:none;border-radius:8px;padding:6px 10px;font-size:.8rem;font-weight:700;}
+.price-review-btn{background:linear-gradient(135deg,var(--primary),var(--primary-light));color:#fff;border:none;border-radius:10px;padding:10px 14px;font-size:.85rem;font-weight:700;cursor:pointer}
+.price-review-btn:hover{transform:translateY(-1px);box-shadow:0 6px 18px rgba(37,99,235,.2)}
+.implement-btn{background:var(--primary);color:#fff;border:none;border-radius:10px;padding:8px 12px;font-size:.82rem;font-weight:700;cursor:pointer}
+.implement-btn:hover{filter:brightness(1.1)}
+.report-btn{background:var(--primary);color:#fff;border:none;border-radius:10px;padding:8px 12px;font-size:.82rem;font-weight:700;cursor:pointer}
+.report-btn:hover{filter:brightness(1.1)}
+.modal-backdrop{position:fixed;inset:0;background:rgba(15,23,42,.6);display:none;align-items:center;justify-content:center;z-index:10000}
+.modal-card{background:#fff;border:1px solid var(--border);border-radius:16px;max-width:560px;max-height:80vh;display:flex;flex-direction:column;width:92%;padding:18px;box-shadow:0 18px 40px rgba(15,23,42,.2)}
+.modal-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+.modal-head h3{font-size:1rem;font-weight:800}
+.modal-close{background:#e2e8f0;border:none;border-radius:8px;padding:6px 10px;cursor:pointer}
+.modal-list{display:grid;gap:8px;margin-top:10px}
+.modal-item{display:flex;justify-content:space-between;align-items:center;border:1px solid var(--border);border-radius:10px;padding:10px;font-size:.85rem}
+.impl-usage{font-size:.75rem;background:#eff6ff;color:#2563eb;border:1px solid #dbeafe;border-radius:6px;padding:2px 8px;white-space:nowrap}
+.impl-row.excluded{opacity:.45;text-decoration:line-through}
+.impl-header{position:sticky;top:0;background:#fff;z-index:1;padding:8px 0;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border);margin-bottom:8px}
+.impl-header .uplift-tag{font-weight:900;color:#16a34a;font-size:1rem}
+.impl-row{display:flex;justify-content:space-between;align-items:center;border:1px solid var(--border);border-radius:10px;padding:10px;font-size:.85rem;cursor:pointer;transition:all .15s}
+.impl-row:hover{border-color:#2563eb;background:#f8fbff}
+.impl-row .remove-btn{background:#fee2e2;color:#ef4444;border:none;border-radius:6px;padding:4px 10px;font-size:.75rem;font-weight:700;cursor:pointer}
+.impl-row .remove-btn.undo{background:#dcfce7;color:#16a34a}
+.modal-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:14px}
+.modal-actions .secondary{background:#e2e8f0;color:#0f172a}
+.modal-actions .primary{background:var(--primary);color:#fff}
+
+</style></head><body>
+<div id="loginGate" style="display:none">
+  <div style="background:#111827;padding:24px;border-radius:14px;min-width:320px">
+    <div style="font-size:1.1rem;font-weight:800;margin-bottom:8px">Vet INC Login</div>
+    <input id="loginEmail" placeholder="Email" style="width:100%;padding:10px;margin:6px 0;border-radius:8px;border:1px solid #334155;background:#0b1220;color:#fff" />
+    <input id="loginPass" type="password" placeholder="Password" style="width:100%;padding:10px;margin:6px 0;border-radius:8px;border:1px solid #334155;background:#0b1220;color:#fff" />
+    <button id="loginBtn" style="width:100%;padding:10px;margin-top:8px;background:#2563eb;color:#fff;border:none;border-radius:8px;font-weight:700">Sign in</button>
+    <button id="guestBtn" style="width:100%;padding:10px;margin-top:8px;background:#1f2937;color:#fff;border:none;border-radius:8px;font-weight:700">Enter without login</button>
+    <div id="loginErr" style="margin-top:6px;color:#fca5a5;font-size:.85rem"></div>
+  </div>
+</div>
+<!-- HEADER --><header class="header"><div class="header-left"><div class="logo-wrap"><div class="logo-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg></div><div class="logo-text">Vet <span>INC</span></div></div><div class="header-divider"></div><div class="clinic-name" id="clinicName">Rosslyn Veterinary Clinic</div></div><div class="header-right"><span class="last-updated" id="lastUpdated">Loading data...</span><span class="btn-upload" style="cursor:default;pointer-events:none;opacity:0.75">&#9679; Live</span></div></header><!-- TAB NAV --><nav class="tab-nav"><button class="tab-btn active" onclick="showTab('analytics', this)"><span class="tab-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="18" y="3" width="4" height="18"/><rect x="10" y="8" width="4" height="13"/><rect x="2" y="13" width="4" height="8"/></svg></span> Key Indicators
+ </button><button class="tab-btn" onclick="showTab('campaigns', this)"><span class="tab-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg></span> Pricing Intelligence
+ </button><button class="tab-btn" onclick="showTab('insights', this)"><span class="tab-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></span> Insights &amp; Actions
+ </button><button class="tab-btn" onclick="showTab('marketing', this)" style="pointer-events:none;opacity:0.5" title="Coming Soon"><span class="tab-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l18-5v12l-18-5v-2z"/><path d="M7 13v6"/></svg></span> Marketing</button><button class="tab-btn" onclick="showTab('inventory', this)" style="pointer-events:none;opacity:0.5" title="Coming Soon"><span class="tab-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/></svg></span> Inventory Intelligence
+ </button><button class="tab-btn" onclick="showTab('ai', this)" style="pointer-events:none;opacity:0.5" title="Coming Soon"><span class="tab-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg></span> AI Assistant
+ </button><button class="tab-btn" onclick="showTab('settings', this)"><span class="tab-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/></svg></span> Settings
+ </button></nav>
+<div style="display:none"></div><!--
+ SECTION 1: Analytics & KPIs  Widget Board
+ --><section id="tab-analytics" class="section active"><style>
+.uplift-board{padding:2rem;max-width:1100px;margin:0 auto}
+.uplift-header{margin-bottom:1.75rem}
+.uplift-title{font-size:1.2rem;font-weight:700;color:var(--text)}
+.uplift-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:1.25rem;margin-bottom:1.25rem}
+@media(max-width:1100px){.uplift-cards{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:768px){.uplift-cards{grid-template-columns:1fr}}
+.uplift-card{background:#fff;border:1px solid var(--border);border-radius:16px;padding:2rem 1.75rem;display:flex;flex-direction:column;gap:0.4rem;box-shadow:0 1px 6px rgba(37,99,235,.05)}
+.uplift-card-label{font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.uplift-card-value{font-size:2.9rem;font-weight:800;line-height:1.05;letter-spacing:-.02em}
+.uplift-card-value.ub-green{color:var(--green)}
+.uplift-card-value.ub-blue{color:var(--primary)}
+.uplift-card-sub{font-size:0.8rem;color:var(--muted);margin-top:.2rem}
+.uplift-chart-card{background:#fff;border:1px solid var(--border);border-radius:16px;padding:1.75rem;box-shadow:0 1px 6px rgba(37,99,235,.05);max-height:280px;overflow:hidden}
+.uplift-chart-header{display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:1rem}
+.uplift-chart-title{font-size:1rem;font-weight:700;color:var(--text)}
+.uplift-chart-sub{font-size:0.8rem;color:var(--muted);margin-top:.25rem}
+.uplift-chart-stats{display:flex;gap:1.5rem}
+.uplift-chart-stat{display:flex;flex-direction:column;align-items:flex-end}
+.uplift-chart-stat .stat-label{font-size:0.7rem;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+.uplift-chart-stat .stat-value{font-size:1.1rem;font-weight:700;color:var(--text)}
+.uplift-chart-stat .stat-value.trend-up{color:var(--green)}
+.uplift-chart-stat .stat-value.trend-down{color:var(--red)}
+.uplift-breakdown{background:#fff;border:1px solid var(--border);border-radius:16px;padding:1.5rem 1.75rem;box-shadow:0 1px 6px rgba(37,99,235,.05)}
+.uplift-breakdown-title{font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:1rem}
+.uplift-breakdown-items{display:flex;flex-direction:column;gap:.6rem}
+.uplift-breakdown-item{display:flex;justify-content:space-between;align-items:center;padding:.75rem 1rem;background:var(--bg);border-radius:8px}
+.uplift-breakdown-label{font-size:.88rem;color:var(--text);font-weight:500}
+.uplift-breakdown-value{font-size:.95rem;font-weight:700;color:var(--green)}
+
+.insight-inbox{background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:12px;margin-bottom:14px;}
+.insight-item{border:1px solid #e2e8f0;border-radius:10px;padding:10px;margin-top:8px;background:#f8fafc;}
+.insight-title{font-weight:700;color:#1e3a8a;font-size:.9rem;}
+.insight-body{color:#475569;font-size:.85rem;margin-top:4px;}
+.insight-actions{margin-top:6px;display:flex;gap:8px;flex-wrap:wrap;}
+.insight-detail{display:none;margin-top:8px;background:#fff;border:1px dashed #e2e8f0;border-radius:8px;padding:8px;font-size:.85rem;color:#475569;}
+.insight-item.open .insight-detail{display:block;}
+.insight-pill{display:inline-block;padding:.2rem .5rem;border-radius:999px;font-weight:700;font-size:.72rem;background:#eef2ff;color:#4338ca;}
+
+
+.campaign-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;}
+.campaign-card{background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:14px;box-shadow:0 8px 20px rgba(15,23,42,.06);}
+.campaign-title{font-weight:800;color:#1e3a8a;}
+.campaign-meta{color:#64748b;font-size:.85rem;margin-top:4px;}
+.campaign-body{margin-top:8px;color:#475569;font-size:.9rem;}
+.campaign-metrics{display:flex;gap:12px;margin-top:10px;font-size:.85rem;color:#1e3a8a;font-weight:700;}
+
+
+.queue{display:grid;gap:8px;}
+.queue-item{display:flex;justify-content:space-between;align-items:center;padding:6px 8px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;font-size:.85rem;}
+.queue-actions{display:flex;gap:6px;}
+.queue-actions .approve{background:#22c55e;color:#fff;border:none;border-radius:6px;padding:4px 8px;font-size:.75rem;}
+.queue-actions .reject{background:#ef4444;color:#fff;border:none;border-radius:6px;padding:4px 8px;font-size:.75rem;}
+.campaign-btn{background:#2563eb;color:#fff;border:none;border-radius:8px;padding:6px 10px;font-size:.8rem;font-weight:700;}
+
+</style>
+<div class="uplift-board">
+  <div class="uplift-header"><span class="uplift-title">Key Indicators</span></div>
+  <div class="uplift-cards" style="grid-template-columns:repeat(3,1fr)">
+    <div class="uplift-card">
+      <div class="uplift-card-label">Yesterday's Revenue</div>
+      <div class="uplift-card-value ub-blue" id="ub-yesterday-rev">--</div>
+      <div class="uplift-card-sub">Total revenue yesterday</div>
+    </div>
+    <div class="uplift-card">
+      <div class="uplift-card-label">Avg Transaction Value</div>
+      <div class="uplift-card-value" id="ub-avg-txn">--</div>
+      <div class="uplift-card-sub" id="ub-avg-txn-trend">This week</div>
+    </div>
+    <div class="uplift-card">
+      <div class="uplift-card-label">Extra Profit Captured</div>
+      <div class="uplift-card-value ub-green" id="ub-captured-month">--</div>
+      <div class="uplift-card-sub">This month (from pricing)</div>
+    </div>
+  </div>
+  <div class="uplift-cards" style="margin-top:1rem;grid-template-columns:repeat(3,1fr)">
+    <div class="uplift-card">
+      <div class="uplift-card-label">New Clients</div>
+      <div class="uplift-card-value ub-blue" id="ub-new-clients">--</div>
+      <div class="uplift-card-sub">This month</div>
+    </div>
+    <div class="uplift-card">
+      <div class="uplift-card-label">Total Revenue</div>
+      <div class="uplift-card-value ub-blue" id="ub-total-rev-month">--</div>
+      <div class="uplift-card-sub">This month</div>
+    </div>
+    <div class="uplift-card" style="opacity:0.45;pointer-events:none">
+      <div class="uplift-card-label">Profit Margin</div>
+      <div class="uplift-card-value" id="ub-profit-margin">--</div>
+      <div class="uplift-card-sub">Coming soon</div>
+    </div>
+  </div>
+  <!-- Avg Transaction Value Chart - Full Width -->
+  <div class="uplift-chart-card" style="margin-top:1.25rem">
+    <div class="uplift-chart-header">
+      <div>
+        <div class="uplift-chart-title">Average Transaction Value</div>
+        <div class="uplift-chart-sub">90-day rolling average per service line item</div>
+      </div>
+      <div class="uplift-chart-stats">
+        <div class="uplift-chart-stat">
+          <span class="stat-label">Current</span>
+          <span class="stat-value" id="chart-current">--</span>
+        </div>
+        <div class="uplift-chart-stat">
+          <span class="stat-label">30d Avg</span>
+          <span class="stat-value" id="chart-avg30">--</span>
+        </div>
+        <div class="uplift-chart-stat">
+          <span class="stat-label">Trend</span>
+          <span class="stat-value" id="chart-trend">--</span>
+        </div>
+      </div>
+    </div>
+    <div style="height:160px;margin-top:1rem">
+      <canvas id="avgTxnChart"></canvas>
+    </div>
+  </div>
+  <div class="uplift-breakdown" style="margin-top:1.25rem">
+    <div class="uplift-breakdown-title">Campaign Breakdown</div>
+    <div class="uplift-breakdown-items">
+      <div class="uplift-breakdown-item">
+        <span class="uplift-breakdown-label">Inflation Adjustment</span>
+        <span class="uplift-breakdown-value" id="ub-c1">--</span>
+      </div>
+      <div class="uplift-breakdown-item">
+        <span class="uplift-breakdown-label">.99 Pricing</span>
+        <span class="uplift-breakdown-value" id="ub-c2">--</span>
+      </div>
+      <div class="uplift-breakdown-item">
+        <span class="uplift-breakdown-label">Micro Margin</span>
+        <span class="uplift-breakdown-value" id="ub-c3">--</span>
+      </section><!-- SECTION 2: Campaigns
+ --><section id="tab-campaigns" class="section"><div id="campaignsLoading" class="loading"><div class="spinner"></div> Analyzing pricing opportunities
+ </div><div id="campaignsContent" style="display:none">
+  <div style="display:flex;justify-content:flex-end;gap:10px;padding:0 1.75rem 0.8rem 1.75rem">
+
+  </div>
+  <!-- Campaign 1: Inflation Adjuster --><div class="campaign-card c-blue"><div class="campaign-header"><div class="campaign-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg></div><div class="campaign-meta"><div class="campaign-title">Inflation Price Adjustment Report</div><div class="campaign-desc">Uses real price history (exact last-modified date per item) and actual transaction volume over the last 365 days. Canadian CPI is compounded from the last price change to today &mdash; showing exactly what each item should cost now and the annual revenue left on the table.</div><div class="campaign-status" id="c1Status">
+      <span class="campaign-badge" id="c1Badge" style="display:none"></span><div class="badge inactive" id="c1StatusBadge"><span>&#9679;</span> Not Started</div>
+      <button class="btn-activate primary" id="c1ActivateBtn" onclick="activateCampaign('inflation')">Start Campaign</button>
+      <button class="implement-btn" onclick="openCampaignImplement('inflation')" style="margin-left:8px">Implement Campaign</button>
+      <button class="report-btn" onclick="generateReport('inflation')" style="margin-left:8px">PDF Report</button>
+     </div>
+     <div class="campaign-progress" id="c1Progress" style="display:none">
+      <div class="progress-bar-wrap"><div class="progress-bar"><div class="fill" id="c1ProgressFill" style="width:0%"></div></div></div>
+      <div class="progress-label" id="c1ProgressLabel">0/0 implemented</div>
+      <button class="btn-analytics" onclick="openCampaignAnalytics('inflation')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg> Analytics</button>
+     </div></div></div><div id="c1Summary" style="display:flex;gap:2rem;padding:1rem 1.75rem;border-bottom:1px solid var(--border);background:#f8faff;flex-wrap:wrap"></div><button class="campaign-toggle" onclick="toggleCampaign(this)">See More <span class="toggle-arrow">&#9662;</span></button><div class="campaign-body"><div style="padding:0.6rem 1.75rem;border-bottom:1px solid var(--border);display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap"><span style="font-size:0.72rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-right:0.5rem">Show:</span><button class="c1-filter active" onclick="c1Filter(this,'all')">All Behind</button><button class="c1-filter" onclick="c1Filter(this,'used')">With Usage Only</button><button class="c1-filter" onclick="c1Filter(this,'urgent')">Urgent (&gt;15%)</button></div><div class="table-scroll"><table><thead><tr><th>Code</th><th>Description</th><th class="num">Last Changed</th><th class="num">Days Stale</th><th class="num">Infl. %</th><th class="num">Current Price</th><th class="num">Suggested Price</th><th class="num">Delta</th><th class="num">Usage / yr</th><th class="num">Est. Uplift / yr</th></tr></thead><tbody id="c1Table"></tbody></table></div></div></div><!-- Campaign 2: .99 Pricing Opportunity --><div class="campaign-card c-purple"><div class="campaign-header"><div class="campaign-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M16 8h-6a2 2 0 100 4h4a2 2 0 110 4H8"/><path d="M12 6v2m0 8v2"/></svg></div><div class="campaign-meta"><div class="campaign-title">.99 Pricing Revenue Recovery</div><div class="campaign-desc">Based on actual transaction history: if every line item that <em>wasn't</em> already at a .99 price had been rounded up to the next .99, how much additional revenue would the clinic have captured last year? This shows real missed dollars &mdash; not theory.</div><div class="campaign-status" id="c2Status">
+      <span class="campaign-badge" id="c2Badge" style="display:none"></span><div class="badge inactive" id="c2StatusBadge"><span>&#9679;</span> Not Started</div>
+      <button class="btn-activate primary" id="c2ActivateBtn" onclick="activateCampaign('99-pricing')">Start Campaign</button>
+      <button class="implement-btn" onclick="openCampaignImplement('99-pricing')" style="margin-left:8px">Implement Campaign</button>
+      <button class="report-btn" onclick="generateReport('99-pricing')" style="margin-left:8px">PDF Report</button>
+     </div>
+     <div class="campaign-progress" id="c2Progress" style="display:none">
+      <div class="progress-bar-wrap"><div class="progress-bar"><div class="fill" id="c2ProgressFill" style="width:0%"></div></div></div>
+      <div class="progress-label" id="c2ProgressLabel">0/0 implemented</div>
+      <button class="btn-analytics" onclick="openCampaignAnalytics('99-pricing')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg> Analytics</button>
+     </div></div></div><!-- Summary stat bar --><div id="c2Summary" style="display:flex;gap:2rem;padding:1rem 1.75rem;border-bottom:1px solid var(--border);background:#f8faff;flex-wrap:wrap"></div><button class="campaign-toggle" onclick="toggleCampaign(this)">See More <span class="toggle-arrow">&#9662;</span></button><div class="campaign-body"><div class="table-scroll"><table><thead><tr><th>Service / Item</th><th>Category</th><th class="num">Current Price</th><th class="num">.99 Price</th><th class="num">Gain / Txn</th><th class="num">Annual Volume</th><th class="num">Annual Uplift</th></tr></thead><tbody id="c2Table"></tbody></table></div></div></div><!-- Campaign 3: Inventory Micro Margin --><div class="campaign-card c-emerald"><div class="campaign-header"><div class="campaign-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg></div><div class="campaign-meta"><div class="campaign-title">Inventory Micro Margin</div><div class="campaign-desc">Inventory items (drugs, supplies) with price changes in the last 365 days. When a supplier raises costs and you update the selling price, add an extra 5% margin bump. Shows units sold since the price change and what the extra margin would have been.</div><div class="campaign-status" id="c3Status">
+      <span class="campaign-badge" id="c3Badge" style="display:none"></span><div class="badge inactive" id="c3StatusBadge"><span>&#9679;</span> Not Started</div>
+      <button class="btn-activate primary" id="c3ActivateBtn" onclick="activateCampaign('micro-margin')">Start Campaign</button>
+      <button class="implement-btn" onclick="openCampaignImplement('micro-margin')" style="margin-left:8px">Implement Campaign</button>
+      <button class="report-btn" onclick="generateReport('micro-margin')" style="margin-left:8px">PDF Report</button>
+     </div>
+     <div class="campaign-progress" id="c3Progress" style="display:none">
+      <div class="progress-bar-wrap"><div class="progress-bar"><div class="fill" id="c3ProgressFill" style="width:0%"></div></div></div>
+      <div class="progress-label" id="c3ProgressLabel">0/0 implemented</div>
+      <button class="btn-analytics" onclick="openCampaignAnalytics('micro-margin')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg> Analytics</button>
+     </div></div></div><div id="c3Summary" style="display:flex;gap:2rem;padding:1rem 1.75rem;border-bottom:1px solid var(--border);background:#f8faff;flex-wrap:wrap"></div><button class="campaign-toggle" onclick="toggleCampaign(this)">See More <span class="toggle-arrow">&#9662;</span></button><div class="campaign-body"><div class="table-scroll"><table><thead><tr><th>Item</th><th class="num">Price Increase</th><th class="num">Current &rarr; +5% Bump</th><th class="num">Annual Volume</th><th class="num">Extra Margin / Year</th></tr></thead><tbody id="c3Table"></tbody></table></div></div></div><!-- Campaign 4: Shoppables — Exam Drop Initiative --><div class="campaign-card" style="border-left:4px solid #f59e0b"><div class="campaign-header"><div class="campaign-icon" style="background:linear-gradient(135deg,#f59e0b,#fbbf24)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 01-8 0"/></svg></div><div class="campaign-meta"><div class="campaign-title">Shoppables — Exam Drop Initiative</div><div class="campaign-desc">Drop exam prices to attract new patients. Top pairing items get a bump to recover the gap. Drag the slider to explore scenarios.</div><div class="campaign-status" id="c4Status">
+      <span class="campaign-badge" id="c4Badge" style="display:none"></span><div class="badge inactive" id="c4StatusBadge"><span>&#9679;</span> Not Started</div>
+      <button class="btn-activate primary" id="c4ActivateBtn" onclick="activateShoppables()">Start Campaign</button>
+      <button class="implement-btn" id="c4ImplementBtn" onclick="openCampaignImplement('shoppables')" style="margin-left:8px;display:none">Implement Campaign</button>
+      <button class="report-btn" id="c4ReportBtn" onclick="generateReport('shoppables')" style="margin-left:8px;display:none">PDF Report</button>
+     </div>
+     <div class="campaign-progress" id="c4Progress" style="display:none">
+      <div class="progress-bar-wrap"><div class="progress-bar"><div class="fill" id="c4ProgressFill" style="width:0%"></div></div></div>
+      <div class="progress-label" id="c4ProgressLabel">0/0 implemented</div>
+      <button class="btn-analytics" onclick="openCampaignAnalytics('shoppables')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg> Analytics</button>
+     </div></div></div>
+
+<!-- Exam Drop Slider -->
+<div id="c4Slider" style="padding:0.75rem 1.75rem;border-bottom:1px solid var(--border)">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+    <div style="font-size:0.78rem;font-weight:700;color:var(--text)">Exam Price Drop</div>
+    <div style="display:flex;align-items:center;gap:8px">
+      <span style="font-size:1.1rem;font-weight:900;color:var(--primary)" id="c4DropAmount">$0</span>
+      <span style="font-size:0.68rem;color:var(--muted)">per exam</span>
+    </div>
+  </div>
+  <input type="range" id="c4DropSlider" min="0" max="50" value="0" step="1" style="width:100%;accent-color:var(--primary)">
+  <div style="display:flex;justify-content:space-between;font-size:0.65rem;color:var(--muted);margin-top:2px">
+    <span>No drop</span>
+    <span>$50 drop</span>
+  </div>
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px">
+    <div style="display:flex;align-items:center;gap:6px">
+      <span style="font-size:0.72rem;font-weight:600;color:var(--muted)">Risk Level:</span>
+      <span id="c4RiskBadge" style="font-size:0.72rem;font-weight:700;padding:2px 8px;border-radius:4px;background:#dcfce7;color:#16a34a">None</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:6px">
+      <span style="font-size:0.72rem;font-weight:600;color:var(--muted)">Pairings need +</span>
+      <span id="c4RequiredBump" style="font-size:0.85rem;font-weight:800;color:var(--primary)">0%</span>
+      <span style="font-size:0.68rem;color:var(--muted)">to break even</span>
+    </div>
+  </div>
+  <div style="margin-top:6px;height:6px;background:#e2e8f0;border-radius:3px;overflow:hidden">
+    <div id="c4RiskBar" style="height:100%;width:0%;border-radius:3px;transition:width 0.3s,background 0.3s;background:#16a34a"></div>
+  </div>
+  <div style="margin-top:10px;text-align:center">
+    <button id="c4PlanBtn" onclick="showC4Plan()" style="display:none;border:none;background:var(--primary);color:#fff;font-size:0.82rem;font-weight:700;padding:8px 20px;border-radius:10px;cursor:pointer;transition:transform 0.2s">See the Plan</button>
+  </div>
+</div>
+
+<!-- Plan Popup Modal -->
+<div id="c4PlanModal" onclick="if(event.target===this)this.style.display='none'" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:9999;overflow-y:auto">
+  <div style="max-width:700px;margin:40px auto;background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,0.3);overflow:hidden">
+    <div style="padding:1.25rem 1.75rem;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
+      <div style="font-size:1rem;font-weight:800;color:var(--text)">The Plan — How We Break Even</div>
+      <button onclick="document.getElementById('c4PlanModal').style.display='none'" style="background:none;border:none;font-size:1.2rem;cursor:pointer;color:var(--muted)">✕</button>
+    </div>
+    <div id="c4PlanContent" style="padding:1.25rem 1.75rem"></div>
+  </div>
+</div>
+
+<div id="c4Summary" style="display:flex;gap:2rem;padding:1rem 1.75rem;border-bottom:1px solid var(--border);background:#f8faff;flex-wrap:wrap"></div><button class="campaign-toggle" onclick="toggleCampaign(this)">See More <span class="toggle-arrow">&#9662;</span></button>
+<div class="campaign-body" style="display:none"><div style="padding:0.6rem 1.75rem;border-bottom:1px solid var(--border);display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap"><span style="font-size:0.72rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-right:0.5rem">Filter:</span><button class="c1-filter active" onclick="c4Filter(this,'all')">All</button><button class="c1-filter" onclick="c4Filter(this,'drops')">Exam Drops</button><button class="c1-filter" onclick="c4Filter(this,'bumps')">Pairing Bumps</button></div><div class="table-scroll"><table><thead><tr><th>Code</th><th>Description</th><th class="num">Type</th><th class="num">Current</th><th class="num">New</th><th class="num">Delta</th><th class="num">Vol / yr</th><th class="num">Impact / yr</th></tr></thead><tbody id="c4Table"></tbody></table></div></div></div></div></section><!--
+ SECTION 3: Inventory Intelligence (Coming Soon)
+ --><section id="tab-inventory" class="section"><div style="min-height:60vh;display:flex;align-items:center;justify-content:center;background:#eff6ff"><div style="background:#fff;border-radius:16px;box-shadow:0 2px 16px rgba(37,99,235,0.08);padding:3rem 4rem;text-align:center;max-width:520px"><div style="font-size:3rem;margin-bottom:1rem">🔒</div><div style="font-size:1.4rem;font-weight:700;color:#1e293b;margin-bottom:0.5rem">Inventory Intelligence Locked</div><div style="font-size:0.95rem;color:#94a3b8">Temporarily locked while we audit COGS and revenue data.</div></div></div></section><!--
+ SECTION 4: Insights & Actions
+ --><section id="tab-insights" class="section">
+<div class="insight-inbox">
+  <div class="settings-card-title">Insights Inbox</div>
+</div>
+<div style="padding:1.5rem 1.75rem">
+<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.25rem">
+  <div><div style="font-size:1.1rem;font-weight:700;color:var(--text)">Revenue Calendar</div><div style="font-size:0.78rem;color:var(--muted)">Daily revenue, COGS &amp; inventory cost %</div></div>
+  <div style="display:flex;align-items:center;gap:0.5rem">
+    <button onclick="calPrev()" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:0.35rem 0.7rem;cursor:pointer;color:var(--text);font-size:0.85rem">&#8592;</button>
+    <span id="calMonthLabel" style="font-size:0.95rem;font-weight:600;color:var(--text);min-width:140px;text-align:center"></span>
+    <button onclick="calNext()" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:0.35rem 0.7rem;cursor:pointer;color:var(--text);font-size:0.85rem">&#8594;</button>
+  </div>
+</div>
+<div style="display:flex;gap:1rem;margin-bottom:1rem;flex-wrap:wrap">
+  <span style="display:flex;align-items:center;gap:0.35rem;font-size:0.73rem;color:var(--muted)"><span style="width:10px;height:10px;border-radius:2px;background:#dcfce7;border:1px solid #16a34a;display:inline-block"></span>Net &gt;50%</span>
+  <span style="display:flex;align-items:center;gap:0.35rem;font-size:0.73rem;color:var(--muted)"><span style="width:10px;height:10px;border-radius:2px;background:#fef9c3;border:1px solid #ca8a04;display:inline-block"></span>Net 30-50%</span>
+  <span style="display:flex;align-items:center;gap:0.35rem;font-size:0.73rem;color:var(--muted)"><span style="width:10px;height:10px;border-radius:2px;background:#fee2e2;border:1px solid #ef4444;display:inline-block"></span>Net &lt;30%</span>
+  <span style="display:flex;align-items:center;gap:0.35rem;font-size:0.73rem;color:var(--muted)"><span style="width:10px;height:10px;border-radius:2px;background:#fef9c3;border:1px solid #ca8a04;display:inline-block"></span>70-85%</span>
+  <span style="display:flex;align-items:center;gap:0.35rem;font-size:0.73rem;color:var(--muted)"><span style="width:10px;height:10px;border-radius:2px;background:#fee2e2;border:1px solid #ef4444;display:inline-block"></span>&lt;70%</span>
+  <span style="display:flex;align-items:center;gap:0.35rem;font-size:0.73rem;color:var(--muted)"><span style="width:10px;height:10px;border-radius:2px;background:#f1f5f9;border:1px solid #cbd5e1;display:inline-block"></span>Closed</span>
+</div>
+<div id="calGrid" style="background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden">
+  <div style="display:grid;grid-template-columns:repeat(7,1fr);border-bottom:1px solid var(--border)">
+    <div style="padding:0.5rem;text-align:center;font-size:0.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em">Sun</div>
+    <div style="padding:0.5rem;text-align:center;font-size:0.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em">Mon</div>
+    <div style="padding:0.5rem;text-align:center;font-size:0.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em">Tue</div>
+    <div style="padding:0.5rem;text-align:center;font-size:0.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em">Wed</div>
+    <div style="padding:0.5rem;text-align:center;font-size:0.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em">Thu</div>
+    <div style="padding:0.5rem;text-align:center;font-size:0.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em">Fri</div>
+    <div style="padding:0.5rem;text-align:center;font-size:0.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em">Sat</div>
+  </div>
+  <div id="calDays" style="display:grid;grid-template-columns:repeat(7,1fr)"></div>
+</div>
+<div id="calLoading" style="text-align:center;padding:2rem;color:var(--muted);font-size:0.85rem;display:none">Loading calendar data...</div>
+<div id="calSummary" style="display:flex;gap:2rem;margin-top:1rem;padding:1rem 1.25rem;background:var(--surface);border:1px solid var(--border);border-radius:10px;flex-wrap:wrap"></div>
+<div id="calErrorLog" style="margin-top:0.75rem;font-size:0.78rem;color:#ef4444"></div>
+<div style="margin-top:1.5rem">
+  <div style="font-size:1rem;font-weight:700;color:var(--text);margin-bottom:0.75rem">Staff Performance — Revenue, Avg Invoice, Revenue per Hour, Salary Spend &amp; Pay</div>
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden">
+    <table style="width:100%;border-collapse:collapse;font-size:0.83rem">
+      <thead><tr style="background:var(--surface2)">
+        <th style="padding:0.6rem 1rem;text-align:left;font-size:0.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em">Staff Name</th>
+        <th style="padding:0.6rem 1rem;text-align:right;font-size:0.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em">Hours</th>
+        <th style="padding:0.6rem 1rem;text-align:right;font-size:0.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em">Hourly Rate</th>
+        <th style="padding:0.6rem 1rem;text-align:right;font-size:0.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em">Total Pay</th>
+      </tr></thead>
+      <tbody>
+        <tr><td style="padding:0.6rem 1rem;color:var(--muted);font-style:italic" colspan="4">Staff hours data coming soon</td></tr>
+        <tr style="background:#f8faff"><td style="padding:0.6rem 1rem;color:var(--muted);font-style:italic" colspan="4">&#8212;</td></tr>
+        <tr><td style="padding:0.6rem 1rem;color:var(--muted);font-style:italic" colspan="4">&#8212;</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+</div></section><!-- SECTION 5: AI Assistant
+ --><section id="tab-ai" class="section"><div style="min-height:60vh;display:flex;align-items:center;justify-content:center;background:#eff6ff"><div style="background:#fff;border-radius:16px;box-shadow:0 2px 16px rgba(37,99,235,0.08);padding:3rem 4rem;text-align:center;max-width:480px"><div style="font-size:3.5rem;margin-bottom:1rem">&#129302;</div><div style="font-size:1.5rem;font-weight:700;color:#1e293b;margin-bottom:0.5rem">AI Assistant</div><div style="font-size:1rem;color:#94a3b8">This module is coming soon.</div></div></div></section><!-- SECTION 4: Settings
+--><section id="tab-marketing" class="section">
+  <div class="section-header"><div class="section-title">Marketing Intelligence</div><div class="section-sub">Campaign controls & approvals</div></div>
+  <div class="campaign-grid" style="grid-template-columns:1fr;">
+    <div class="campaign-card">
+      <div class="campaign-title">Campaign 1 — Facebook Posts</div>
+      <div class="campaign-meta">Approve / Reject content</div>
+      <div class="queue">
+        <div class="queue-item"><span>“Why your website matters”</span><div class="queue-actions"><button class="approve">Approve</button><button class="reject">Reject</button></div></div>
+        <div class="queue-item"><span>“$29/mo local sites”</span><div class="queue-actions"><button class="approve">Approve</button><button class="reject">Reject</button></div></div>
+      </div>
+      <textarea placeholder="Drop new post content…" rows="3" style="width:100%;margin-top:8px;padding:8px;border:1px solid #e2e8f0;border-radius:8px;"></textarea>
+      <button class="campaign-btn" style="margin-top:6px;">Add to Schedule</button>
+    </div>
+
+    <div class="campaign-card">
+      <div class="campaign-title">Campaign 2 — Email Follow‑ups</div>
+      <div class="campaign-meta">Approve message + track analytics</div>
+      <div class="campaign-body">
+        <div class="campaign-metrics"><span>Sent (30d)</span><span>420</span></div>
+        <div class="campaign-metrics"><span>Open rate</span><span>38%</span></div>
+        <div class="campaign-metrics"><span>Booked</span><span>22</span></div>
+      </div>
+      <div class="queue">
+        <div class="queue-item"><span>Email: Vaccine reminder</span><div class="queue-actions"><button class="approve">Approve</button><button class="reject">Reject</button></div></div>
+      </div>
+    </div>
+  </div>
+</section><section id="tab-settings" class="section"><div class="settings-wrap" style="max-width:960px;margin:0 auto;padding:2rem 1.5rem">
+
+<!-- Page Header -->
+<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:2rem">
+  <div>
+    <div style="font-size:1.4rem;font-weight:900;color:var(--text);letter-spacing:-0.02em">Settings</div>
+    <div style="font-size:0.82rem;color:var(--muted);margin-top:2px">Manage your clinic profile and cost structure</div>
+  </div>
+  <div style="display:flex;align-items:center;gap:0.75rem">
+    <span class="settings-save-indicator" id="settingsSaveIndicator" style="font-size:0.78rem;color:var(--green);font-weight:600;opacity:0;transition:opacity 0.4s">Saved</span>
+    <div style="display:flex;align-items:center;gap:6px;background:rgba(22,163,74,0.1);color:var(--green);padding:5px 14px;border-radius:20px;font-size:0.72rem;font-weight:700"><span style="width:6px;height:6px;border-radius:50%;background:var(--green);display:inline-block"></span> Auto-saving to Supabase</div>
+  </div>
+</div>
+
+<!-- Clinic Profile Card -->
+<div style="background:rgba(255,255,255,0.84);backdrop-filter:blur(20px) saturate(1.6);-webkit-backdrop-filter:blur(20px) saturate(1.6);border-radius:20px;box-shadow:0 4px 24px rgba(0,0,0,0.10),0 1px 4px rgba(0,0,0,0.06);padding:1.75rem;margin-bottom:1.5rem">
+  <div style="display:flex;align-items:center;gap:1rem;margin-bottom:1.5rem">
+    <div style="width:52px;height:52px;background:linear-gradient(135deg,var(--primary),var(--primary-light));border-radius:14px;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 12px rgba(37,99,235,0.25)"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg></div>
+    <div>
+      <div style="font-size:1.1rem;font-weight:800;color:var(--text)" id="clinicNameSetting">Rosslyn Veterinary Clinic</div>
+      <div style="font-size:0.78rem;color:var(--muted)">Edmonton / St. Albert, AB</div>
+    </div>
+  </div>
+  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:1rem">
+    <div style="background:var(--surface2);border-radius:12px;padding:0.75rem 1rem;text-align:center">
+      <div style="font-size:0.65rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em">Data Source</div>
+      <div style="font-size:0.9rem;font-weight:800;color:var(--text);margin-top:4px">Avimark</div>
+    </div>
+    <div style="background:var(--surface2);border-radius:12px;padding:0.75rem 1rem;text-align:center">
+      <div style="font-size:0.65rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em">ETL Sync</div>
+      <div style="font-size:0.9rem;font-weight:800;color:var(--green);margin-top:4px">Nightly 2AM</div>
+    </div>
+    <div style="background:var(--surface2);border-radius:12px;padding:0.75rem 1rem;text-align:center">
+      <div style="font-size:0.65rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em">Tables Synced</div>
+      <div style="font-size:0.9rem;font-weight:800;color:var(--text);margin-top:4px">30</div>
+    </div>
+    <div style="background:var(--surface2);border-radius:12px;padding:0.75rem 1rem;text-align:center">
+      <div style="font-size:0.65rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em">Total Records</div>
+      <div style="font-size:0.9rem;font-weight:800;color:var(--text);margin-top:4px">2.58M</div>
+    </div>
+  </div>
+</div>
+
+<!-- Cost Summary Banner -->
+<div style="background:linear-gradient(135deg,#1e3a5f,#2563eb);border-radius:20px;padding:1.5rem 1.75rem;margin-bottom:1.5rem;color:#fff;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:1rem">
+  <div>
+    <div style="font-size:0.68rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;opacity:0.7">Total Monthly Operating Cost</div>
+    <div style="font-size:2rem;font-weight:900;line-height:1.1;margin-top:4px" id="settingsGrandTotal">$0.00</div>
+  </div>
+  <div style="display:flex;gap:2rem">
+    <div style="text-align:center">
+      <div style="font-size:0.65rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;opacity:0.6">Per Calendar Day</div>
+      <div style="font-size:1.2rem;font-weight:800;margin-top:2px" id="settingsDailyRate">$0.00</div>
+    </div>
+    <div style="text-align:center">
+      <div style="font-size:0.65rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;opacity:0.6">Per Working Day</div>
+      <div style="font-size:1.2rem;font-weight:800;margin-top:2px" id="settingsWorkingDayRate">$0.00</div>
+    </div>
+    <div style="text-align:center">
+      <div style="font-size:0.65rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;opacity:0.6">Break-Even / Day</div>
+      <div style="font-size:1.2rem;font-weight:800;margin-top:2px" id="settingsBreakEven">$0.00</div>
+    </div>
+  </div>
+</div>
+
+<!-- Two-column cost cards -->
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem">
+
+  <!-- Fixed Costs -->
+  <div style="background:rgba(255,255,255,0.84);backdrop-filter:blur(20px) saturate(1.6);-webkit-backdrop-filter:blur(20px) saturate(1.6);border-radius:20px;box-shadow:0 4px 24px rgba(0,0,0,0.10),0 1px 4px rgba(0,0,0,0.06);padding:1.5rem 1.5rem 1.25rem;display:flex;flex-direction:column">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:0.3rem">
+      <div style="width:32px;height:32px;border-radius:9px;background:rgba(37,99,235,0.1);display:flex;align-items:center;justify-content:center"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg></div>
+      <div style="font-size:1rem;font-weight:800;color:var(--text)">Fixed Costs</div>
+    </div>
+    <div style="font-size:0.75rem;color:var(--muted);margin-bottom:1rem">Monthly recurring fixed expenses</div>
+    <div id="fixedCostsList" style="flex:1"></div>
+    <button class="settings-add-btn" onclick="ClinicSettings.addRow('fixed')" style="margin-top:0.75rem">+ Add Fixed Cost</button>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:1rem;padding-top:0.85rem;border-top:2px solid var(--border)">
+      <span style="font-size:0.9rem;font-weight:800;color:var(--text)">Total Fixed</span>
+      <span style="font-size:1.15rem;font-weight:900;color:var(--primary)" id="fixedCostsTotal">$0.00</span>
+    </div>
+  </div>
+
+  <!-- Utility Costs -->
+  <div style="background:rgba(255,255,255,0.84);backdrop-filter:blur(20px) saturate(1.6);-webkit-backdrop-filter:blur(20px) saturate(1.6);border-radius:20px;box-shadow:0 4px 24px rgba(0,0,0,0.10),0 1px 4px rgba(0,0,0,0.06);padding:1.5rem 1.5rem 1.25rem;display:flex;flex-direction:column">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:0.3rem">
+      <div style="width:32px;height:32px;border-radius:9px;background:rgba(234,88,12,0.1);display:flex;align-items:center;justify-content:center"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--orange)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg></div>
+      <div style="font-size:1rem;font-weight:800;color:var(--text)">Utility Costs</div>
+    </div>
+    <div style="font-size:0.75rem;color:var(--muted);margin-bottom:1rem">Monthly utility and service expenses</div>
+    <div id="utilityCostsList" style="flex:1"></div>
+    <button class="settings-add-btn" onclick="ClinicSettings.addRow('utility')" style="margin-top:0.75rem">+ Add Utility Cost</button>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:1rem;padding-top:0.85rem;border-top:2px solid var(--border)">
+      <span style="font-size:0.9rem;font-weight:800;color:var(--text)">Total Utilities</span>
+      <span style="font-size:1.15rem;font-weight:900;color:var(--orange)" id="utilityCostsTotal">$0.00</span>
+    </div>
+  </div>
+
+</div>
+
+</div></section><script>
+// 
+// Utilities
+// 
+function fmt$(n) { return '$' + n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
+function fmtN(n) { return n.toLocaleString(); }
+function fmtPct(n) { return (n * 100).toFixed(1) + '%'; }
+function escHtml(str) {
+ return String(str)
+ .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+function parseTxnDate(str) {
+ if (!str) return null;
+ const parts = str.split(' ')[0].split('/');
+ if (parts.length < 3) return null;
+ const month = parseInt(parts[0], 10);
+ const year = parseInt(parts[2], 10);
+ if (isNaN(month) || isNaN(year)) return null;
+ return { year, month, key: `${year}-${String(month).padStart(2,'0')}` };
+}
+
+function parseTxnDateISO(str) {
+ if (!str) return null;
+ const k = str.slice(0, 7);
+ const year = parseInt(k.slice(0, 4), 10);
+ const month = parseInt(k.slice(5, 7), 10);
+ if (isNaN(year) || isNaN(month)) return null;
+ return { year, month, key: k };
+}
+
+function monthLabel(key) {
+ const [y, m] = key.split('-');
+ return MONTH_NAMES[parseInt(m,10)-1] + ' ' + y.slice(2);
+}
+
+function sortMonthKeys(keys) {
+ return keys.slice().sort((a,b) => a.localeCompare(b));
+}
+
+Chart.defaults.color = '#64748b';
+Chart.defaults.borderColor = 'rgba(219,234,254,0.8)';
+Chart.defaults.font.family = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+Chart.defaults.font.size = 11;
+
+// 
+// Campaign Toggle
+// 
+function toggleCampaign(btn) {
+ const body = btn.nextElementSibling;
+ const isOpen = body.classList.toggle('open');
+ btn.classList.toggle('open', isOpen);
+ btn.innerHTML = (isOpen ? 'See Less' : 'See More') + ' <span class="toggle-arrow">&#9662;</span>';
+}
+
+// 
+// Tab Switching
+// 
+function renderInventory(){
+ var data=window._invUsage||[];
+ var q=(document.getElementById("invSearch")||{}).value||"";
+ var mf=(document.getElementById("invMarginFilter")||{}).value||"all";
+ if(q){var ql=q.toLowerCase();data=data.filter(r=>(r.name||"").toLowerCase().includes(ql)||(r.code||"").toLowerCase().includes(ql));}
+ if(mf==="profitable")data=data.filter(r=>r.margin_pct>0);
+ else if(mf==="loss")data=data.filter(r=>r.margin_pct<0);
+ else if(mf==="high")data=data.filter(r=>r.margin_pct>50);
+ // KPIs
+ var totRev=0,totCogs=0,totItems=data.length;
+ data.forEach(r=>{totRev+=r.total_revenue;totCogs+=r.total_cogs;});
+ var totGp=totRev-totCogs,totMargin=totRev>0?totGp/totRev*100:0;
+ var kpiEl=document.getElementById("invKpis");
+ if(kpiEl)kpiEl.innerHTML=
+   '<div style="text-align:center"><div style="font-size:0.65rem;font-weight:700;color:var(--muted);text-transform:uppercase">Items</div><div style="font-size:1.1rem;font-weight:800">'+totItems+'</div></div>'+
+   '<div style="text-align:center"><div style="font-size:0.65rem;font-weight:700;color:var(--muted);text-transform:uppercase">Revenue</div><div style="font-size:1.1rem;font-weight:800;color:var(--primary)">'+fmt$(totRev)+'</div></div>'+
+   '<div style="text-align:center"><div style="font-size:0.65rem;font-weight:700;color:var(--muted);text-transform:uppercase">Est. COGS</div><div style="font-size:1.1rem;font-weight:800;color:#ef4444">'+fmt$(totCogs)+'</div></div>'+
+   '<div style="text-align:center"><div style="font-size:0.65rem;font-weight:700;color:var(--muted);text-transform:uppercase">Margin</div><div style="font-size:1.1rem;font-weight:800;color:'+(totMargin>=50?"#16a34a":"#ca8a04")+'">'+totMargin.toFixed(1)+'%</div></div>';
+ // Table
+ var tb=document.getElementById("invTable");
+ if(!tb)return;
+ tb.innerHTML=data.map(r=>{
+   var mc=r.margin_pct>=50?"#16a34a":r.margin_pct>=0?"#ca8a04":"#ef4444";
+   return '<tr style="border-bottom:1px solid var(--border)">'+
+     '<td style="padding:0.45rem 0.75rem"><div style="font-weight:600">'+escHtml(r.name||r.code)+'</div><div style="font-size:0.7rem;color:var(--muted)">'+r.code+' → '+r.service_code+'</div></td>'+
+     '<td style="text-align:right;padding:0.45rem 0.75rem">'+fmt$(r.unit_cost)+'</td>'+
+     '<td style="text-align:right;padding:0.45rem 0.75rem">'+fmtN(Math.round(r.total_qty))+'</td>'+
+     '<td style="text-align:right;padding:0.45rem 0.75rem;font-weight:600;color:var(--primary)">'+fmt$(r.total_revenue)+'</td>'+
+     '<td style="text-align:right;padding:0.45rem 0.75rem;color:#ef4444">'+fmt$(r.total_cogs)+'</td>'+
+     '<td style="text-align:right;padding:0.45rem 0.75rem;color:'+mc+'">'+fmt$(r.gross_profit)+'</td>'+
+     '<td style="text-align:right;padding:0.45rem 0.75rem;font-weight:700;color:'+mc+'">'+r.margin_pct.toFixed(1)+'%</td>'+
+     '<td style="text-align:right;padding:0.45rem 0.75rem">'+r.txn_count+'</td></tr>';
+ }).join('');
+}
+function showTab(name, btn) {
+ document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+ document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+ document.getElementById('tab-' + name).classList.add('active');
+ if (btn) btn.classList.add('active');
+ if (name === 'settings') ClinicSettings.init();
+}
+
+//  Supabase 
+const SB_URL = 'https://rnqhhzatlxmyvccdvqkr.supabase.co';
+const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJucWhoemF0bHhteXZjY2R2cWtyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUwMTQ5ODUsImV4cCI6MjA5MDU5MDk4NX0.zokle21pVEPG5bIOFiyZIWYkYIwhkolWNOhJ7Cbub30';
+
+async function sbFetch(table, params) {
+ const res = await fetch(`${SB_URL}/rest/v1/${table}?${params}`, {
+   headers: { apikey: SB_KEY, Authorization: 'Bearer ' + SB_KEY, Accept: 'application/json' }
+ });
+ if (!res.ok) throw new Error('SB ' + res.status);
+ return res.json();
+}
+
+async function sbFetchAll(table, params) {
+ const headers = { apikey: SB_KEY, Authorization: 'Bearer ' + SB_KEY, Accept: 'application/json', Prefer: 'count=exact' };
+ let all = [], from = 0, total = Infinity;
+ const MAX_ROWS = 50000; // Limit to 50K rows to avoid Supabase pagination issues
+ while (from < total && all.length < MAX_ROWS) {
+   const to = from + 999;
+   try {
+     const res = await fetch(`${SB_URL}/rest/v1/${table}?${params}&offset=${from}&limit=1000`, {
+       headers
+     });
+     if (res.status === 500) {
+       console.warn(`SB 500 at offset ${from}, stopping pagination (got ${all.length} rows)`);
+       break;
+     }
+     if (!res.ok) throw new Error('SB ' + res.status + ' on ' + table);
+     const cr = res.headers.get('content-range');
+     if (cr) { const m = cr.match(/\/(\d+)/); if (m) total = parseInt(m[1]); }
+     const rows = await res.json();
+     if (!rows || rows.length === 0) break;
+     all = all.concat(rows);
+     from += rows.length;
+     if (rows.length < 1000) break;
+   } catch(e) {
+     console.warn(` Error fetching ${table} at offset ${from}:`, e.message, '(continuing with', all.length, 'rows)');
+     break;
+   }
+ }
+ return all;
+}
+
+//
+// Data Loading
+//
+let serviceData = null;
+let pricesData = null;
+let treatmentsData = null;
+let itemNamesMap = null;
+ let accountsData = null;
+let microMarginData = null;
+let analyticsReady = false;
+let campaignsReady = false;
+const campaignCache = {};
+const CAMPAIGN_TTL = 7 * 60 * 1000;
+
+// Shared analytics objects (for AI access)
+let AI_byService = {};
+let AI_byCat = {};
+let AI_byMonth = {};
+let AI_monthKeys = [];
+let AI_totalRevenue = 0; let AI_totalQty = 0;
+
+// Wire inventory search/filter after DOM ready
+window.addEventListener("DOMContentLoaded", function(){
+  var s=document.getElementById("invSearch"),f=document.getElementById("invMarginFilter");
+  if(s)s.addEventListener("input",function(){renderInventory();});
+  if(f)f.addEventListener("change",function(){renderInventory();});
+});
+
+async function loadDataAndBuild() {
+ try {
+   const svcRows = await (async () => {
+      const resp = await fetch(SB_URL + '/rest/v1/std_service_daily?select=service_code,revenue,quantity,transactions&clinic_id=eq.rosslyn', {headers:{'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY}});
+      const rows = await resp.json();
+      // Aggregate by service_code
+      const map = {};
+      for (const r of rows) {
+        if (!map[r.service_code]) map[r.service_code] = {code:r.service_code, total_amount:0, total_qty:0, txn_count:0};
+        map[r.service_code].total_amount += parseFloat(r.revenue||0);
+        map[r.service_code].total_qty += parseFloat(r.quantity||0);
+        map[r.service_code].txn_count += parseInt(r.transactions||0);
+      }
+      return Object.values(map);
+    })();
+   // Map to expected format for campaigns
+   svcRows.forEach(r => { r.amount = r.total_amount / (r.txn_count || 1); r.quantity = r.total_qty; });
+   
+   const priceRows = Promise.resolve([]) /* disabled: prices */;
+   
+   const treatRows = Promise.resolve([]) /* disabled: treatments */;
+   const itemNameRows = Promise.resolve([]) /* disabled: item_names */;
+   itemNamesMap = {};
+   for (const r of itemNameRows) itemNamesMap[r.code] = r.name;
+   
+   const acctRows = Promise.resolve([]) /* disabled: accounts */;
+   
+   const mmRows = Promise.resolve([]) /* disabled: micro_margin_agg */;
+   
+   serviceData = svcRows;
+   pricesData = priceRows;
+   treatmentsData = treatRows;
+   accountsData = acctRows;
+   microMarginData = mmRows;
+   
+   // Load service catalog from std_services (no unit_cost available)
+   const itemRows = await sbFetchAll('std_services', 'select=service_code,name,category&clinic_id=eq.rosslyn');
+   const inventoryItems = []; // std_services has no unit_cost; skip COGS calculation
+   
+   // Build inventory usage from serviceData + items
+   const invMap = {};
+   for (const item of inventoryItems) {
+     if (!invMap[item.service_code]) invMap[item.service_code] = [];
+     invMap[item.service_code].push(item);
+   }
+   const invUsage = [];
+   for (const svc of serviceData || []) {
+     const code = svc.code;
+     const items = invMap[code];
+     if (!items) continue;
+     for (const item of items) {
+       const qty = svc.total_qty || 0;
+       const rev = svc.total_amount || 0;
+       const cost = item.unit_cost || 0;
+       const cogs = cost * qty;
+       const gp = rev - cogs;
+       invUsage.push({ code: item.code, name: item.name, service_code: code, unit_cost: cost, total_qty: qty, total_revenue: rev, total_cogs: cogs, gross_profit: gp, margin_pct: rev > 0 ? (gp/rev*100) : 0, txn_count: svc.txn_count || 0, service_type: svc.service_type });
+     }
+   }
+   invUsage.sort((a,b) => b.total_revenue - a.total_revenue);
+   window._invUsage = invUsage;
+   if (document.getElementById('invTable')) renderInventory();
+   
+   console.log('DATA LOADED:');
+   console.log('  serviceData:', serviceData.length, 'rows');
+   console.log('  pricesData:', pricesData.length, 'rows');
+   console.log('  treatmentsData:', treatmentsData.length, 'rows');
+   console.log('  accountsData:', accountsData.length, 'rows');
+   if (serviceData.length > 0) console.log('  Sample service:', serviceData[0]);
+   if (pricesData.length > 0) console.log('  Sample price:', pricesData[0]);
+   
+   const ds=document.getElementById('dotService');
+   const dc=document.getElementById('dotCatalog');
+   const dp=document.getElementById('dotPriceHistory');
+   if(ds) ds.classList.add('loaded');
+   if(dc) dc.classList.add('loaded');
+   if(dp) dp.classList.add('loaded');
+   buildAnalytics();
+ } catch(e) {
+   console.error(' Data load error:', e);
+   const el = document.getElementById('campaignsLoading');
+   if (el) el.innerHTML = '<div style="color:var(--red);padding:2rem;font-size:0.85rem"><strong>Data Load Error:</strong><br/>' + e.toString() + '</div>';
+ }
+}
+
+loadDataAndBuild().then(() => {
+  var kpiLabel = document.getElementById('kpiDateLabel');
+  if (kpiLabel) kpiLabel.textContent = 'All time';
+  document.getElementById('lastUpdated').textContent = 'Loaded ' + (serviceData||[]).length.toLocaleString() + ' services';
+  return buildCampaigns();
+}).catch(e => {
+  console.error(' Campaign init error:', e);
+  document.getElementById('campaignsLoading').style.display = 'none';
+  document.getElementById('campaignsLoading').innerHTML = '<div style="color:var(--red);padding:2rem;font-size:0.9rem"><strong>Error:</strong> ' + e.message + '</div>';
+  document.getElementById('campaignsLoading').style.display = 'block';
+});
+
+//
+// SECTION 1: Analytics & KPIs
+//
+let analyticsFilterDate = null;
+
+async function filterKPIByDate(dateStr) {
+  analyticsFilterDate = dateStr ? new Date(dateStr + 'T12:00:00') : null;
+  const label = document.getElementById('kpiDateLabel');
+  if (label) {
+    label.textContent = analyticsFilterDate ? 'Loading...' : 'All time';
+  }
+  analyticsReady = false;
+  await buildAnalytics();
+  if (label && analyticsFilterDate) {
+    label.textContent = analyticsFilterDate.toLocaleDateString();
+  }
+}
+
+async function buildAnalytics() {
+ analyticsReady = true;
+ const selectedDate = analyticsFilterDate;
+ 
+ let totalRevenue = 0, totalQty = 0, visits = 0, uniqueServices = 0, avgLineAmount = 0;
+ const byMonth = {}, byCat = {}, byService = {};
+
+ if (selectedDate) {
+   // Day view: fetch from std_service_daily and daily_service_breakdown
+   const dayStr = selectedDate.toISOString().slice(0,10);
+   const [dayKpi, daySvc] = await Promise.all([
+     sbFetch('std_service_daily', 'select=*&clinic_id=eq.rosslyn&day=eq.' + dayStr),
+     Promise.resolve([]) /* disabled */ || Promise.resolve(null) /* disabled */ || sbFetch('daily_service_breakdown', 'select=*&txn_day=eq.' + dayStr)
+   ]);
+   
+   if (dayKpi.length) {
+     const k = dayKpi[0];
+     totalRevenue = k.revenue || 0;
+     totalQty = k.transactions || 0;
+     visits = k.visits || 0;
+     uniqueServices = k.unique_services || 0;
+     avgLineAmount = k.avg_line_amount || 0;
+   }
+   
+   // Category + service breakdown for that day
+   for (const row of daySvc) {
+     const classid = (row.service_type || '').trim();
+     const code = row.code;
+     if (classid) {
+       if (!byCat[classid]) byCat[classid] = { rev: 0 };
+       byCat[classid].rev += row.revenue || 0;
+     }
+     if (code) {
+       const name = code;
+       if (!byService[name]) byService[name] = { rev: 0, qty: 0, classid };
+       byService[name].rev += row.revenue || 0;
+       byService[name].qty += row.qty || 0;
+     }
+   }
+   
+   // Month key for this day
+   const mk = dayStr.slice(0,7);
+   byMonth[mk] = { rev: totalRevenue, qty: totalQty };
+   
+ } else {
+   // All-time view: use accounts for monthly trend + serviceData for totals
+   for (const row of (accountsData || [])) {
+     const tot = (row.amount || 0) / 100;
+     const txn = parseTxnDateISO(row.txn_date);
+     if (txn) {
+       if (!byMonth[txn.key]) byMonth[txn.key] = { rev: 0, qty: 0 };
+       byMonth[txn.key].rev += tot;
+       byMonth[txn.key].qty += 1;
+     }
+   }
+   let totalLineItems = 0;
+   for (const row of (serviceData||[])) {
+     const classid = (row.service_type || '').trim();
+     const tot = parseFloat(row.total_amount || row.amount) || 0;
+     const qty = parseFloat(row.total_qty || row.quantity) || 0;
+     const txnCount = parseInt(row.txn_count || 0);
+     const code = row.code || 'Unknown';
+     totalRevenue += tot;
+     totalQty += txnCount || qty;
+     totalLineItems += txnCount || 1;
+     if (classid) {
+       if (!byCat[classid]) byCat[classid] = { rev: 0 };
+       byCat[classid].rev += tot;
+     }
+     if (code) {
+       if (!byService[code]) byService[code] = { rev: 0, qty: 0, classid };
+       byService[code].rev += tot;
+       byService[code].qty += qty;
+     }
+   }
+   avgLineAmount = totalLineItems > 0 ? totalRevenue / totalLineItems : 0;
+ }
+
+ // Save for AI and widget board
+ AI_byService = byService;
+ AI_byCat = byCat;
+ AI_byMonth = byMonth;
+ AI_totalRevenue = totalRevenue;
+ AI_totalQty = totalQty;
+
+ const monthKeys = sortMonthKeys(Object.keys(byMonth));
+ AI_monthKeys = monthKeys;
+
+ const dateLabel = selectedDate ? selectedDate.toLocaleDateString() : 'All Time';
+ document.getElementById('lastUpdated').textContent = `${dateLabel}  ${fmt$(totalRevenue)} revenue  ${fmtN(totalQty)} transactions`;
+ if (selectedDate) {
+   document.getElementById('lastUpdated').textContent += `  ${fmtN(visits)} visits  ${fmtN(uniqueServices)} services`;
+ }
+
+ window._avgLineAmount = avgLineAmount; refreshUpliftBoard();
+ if (typeof WidgetBoard !== 'undefined') WidgetBoard.onCSVReady();
+}
+
+// 
+// SECTION 2: Campaigns
+// 
+async function buildCampaigns() {
+  if (campaignsReady) return;
+  campaignsReady = true;
+  try {
+    console.log('  C1...');
+    await buildC1();
+    console.log('  C2...');
+    await buildC2();
+    console.log('  C3...');
+    await buildC3();
+    document.getElementById('campaignsLoading').style.display = 'none';
+    document.getElementById('campaignsContent').style.display = 'block';
+  } catch(e) {
+    console.error(' Campaign load error:', e);
+    const el = document.getElementById('campaignsLoading');
+    if (el) el.innerHTML = '<div style="color:var(--red);padding:2rem;font-size:0.9rem"><strong>Campaign Error:</strong> ' + e.message + '</div>';
+  }
+}
+
+// Canadian Veterinary CPI Inflation Rates (annual) 
+// Source: Bank of Canada CPI, veterinary services category
+// Official Statistics Canada CPI (annual average % change)
+const CPI_RATES = {
+ 2005: 0.022, 2006: 0.020, 2007: 0.021,
+ 2008: 0.024, 2009:-0.003, 2010: 0.018,
+ 2011: 0.029, 2012: 0.015, 2013: 0.009,
+ 2014: 0.020, 2015: 0.011, 2016: 0.014,
+ 2017: 0.016, 2018: 0.022, 2019: 0.019,
+ 2020: 0.007, 2021: 0.034, 2022: 0.068,
+ 2023: 0.039, 2024: 0.024, 2025: 0.021
+};
+
+// Compound inflation from year Y to today (2025)
+function compoundInflation(fromYear, toYear) {
+ let factor = 1.0;
+ for (let y = fromYear; y < toYear; y++) {
+ factor *= (1 + (CPI_RATES[y] || 0.04));
+ }
+ return factor;
+}
+
+let c1AllItems = [];
+let c1CurrentFilter = 'all';
+
+// Real CPI rates (Statistics Canada) 
+// Override the earlier partial table with the full accurate set
+// Official Statistics Canada CPI annual rates
+Object.assign(CPI_RATES, {
+ 2005: 0.022, 2006: 0.020, 2007: 0.021,
+ 2008: 0.024, 2009:-0.003, 2010: 0.018,
+ 2011: 0.029, 2012: 0.015, 2013: 0.009,
+ 2014: 0.020, 2015: 0.011, 2016: 0.014,
+ 2017: 0.016, 2018: 0.022, 2019: 0.019,
+ 2020: 0.007, 2021: 0.034, 2022: 0.068,
+ 2023: 0.039, 2024: 0.024, 2025: 0.021
+});
+
+async function buildC1() {
+  try {
+  const data = await campaignFetch('inflation');
+  const items = (data.items || []).map(it => {
+    const gapPct = it.currentPrice > 0 ? it.delta / it.currentPrice : 0;
+    return { ...it, price: it.currentPrice, gap: it.delta, gapPct,
+      status_flag: gapPct > 0.15 ? 'urgent' : gapPct > 0.04 ? 'behind' : 'low' };
+  });
+  c1AllItems = items;
+  window.c1Items = items; // for campaign tracking
+
+  const withUsage = items.filter(i => (i.usage || 0) > 0);
+  const usageUplift = withUsage.reduce((s, i) => s + (i.uplift || 0), 0);
+  const urgent = items.filter(i => i.status_flag === 'urgent');
+  const maxDays = items.length ? items.reduce((m, i) => Math.max(m, i.daysSince || 0), 0) : 0;
+  const avgDays = items.length ? Math.round(items.reduce((s, i) => s + (i.daysSince || 0), 0) / items.length) : 0;
+
+  document.getElementById('c1Badge').textContent =
+    `${items.length} items behind inflation  ${fmt$(usageUplift)} confirmed annual uplift`;
+
+  document.getElementById('c1Summary').innerHTML = `
+<div class="stat-bar-item"><div class="stat-bar-label">Confirmed Annual Uplift</div><div class="stat-bar-value" style="color:var(--green)">${fmt$(usageUplift)}</div><div class="stat-bar-sub">items with real usage  delta</div></div><div class="stat-bar-item"><div class="stat-bar-label">Items Behind Inflation</div><div class="stat-bar-value">${items.length}</div><div class="stat-bar-sub">${withUsage.length} with recent usage</div></div><div class="stat-bar-item"><div class="stat-bar-label">Urgent (&gt;15% gap)</div><div class="stat-bar-value" style="color:var(--red)">${urgent.length}</div><div class="stat-bar-sub">immediate review needed</div></div><div class="stat-bar-item"><div class="stat-bar-label">Oldest Stale Price</div><div class="stat-bar-value" style="color:var(--orange)">${Math.round(maxDays / 365.25)} yrs</div><div class="stat-bar-sub">since last price change</div></div><div class="stat-bar-item"><div class="stat-bar-label">Avg Days Stale</div><div class="stat-bar-value" style="color:var(--purple)">${fmtN(avgDays)}</div><div class="stat-bar-sub">avg since last price change</div></div>
+  `;
+
+  window._c1Uplift = usageUplift; refreshUpliftBoard();
+  c1Render('all');
+  } catch(e) {
+    console.error('C1 error:', e);
+    document.getElementById('c1Table').innerHTML = `<tr><td colspan="10" style="color:var(--red)">Error: ${e.message}</td></tr>`;
+  }
+}
+
+function c1Filter(btn, filter) {
+ document.querySelectorAll('.c1-filter').forEach(b => b.classList.remove('active'));
+ btn.classList.add('active');
+ c1CurrentFilter = filter;
+ c1Render(filter);
+}
+
+function c1Render(filter) {
+ let items = c1AllItems;
+ if (filter === 'used') items = items.filter(i => i.usage > 0);
+ if (filter === 'urgent') items = items.filter(i => i.status_flag === 'urgent');
+
+ if (!items.length) {
+ document.getElementById('c1Table').innerHTML =
+ `<tr><td colspan="10" style="text-align:center;padding:2rem;color:var(--muted)">No items match this filter</td></tr>`;
+ return;
+ }
+
+ document.getElementById('c1Table').innerHTML = items.slice(0, 300).map(it => {
+ const gapColor = it.gapPct > 0.15 ? '#ef4444' : it.gapPct > 0.07 ? '#ea580c' : '#64748b';
+ const upliftStr = it.uplift > 0.01
+ ? `<strong style="color:#16a34a">+${fmt$(it.uplift)}</strong>`
+ : '<span style="color:var(--muted)"></span>';
+ const usageStr = it.usage > 0
+ ? fmtN(Math.round(it.usage))
+ : '<span style="color:var(--muted)"></span>';
+ const daysColor = it.daysSince > 730 ? '#ef4444' : it.daysSince > 365 ? '#ea580c' : '#64748b';
+ return `<tr><td style="font-family:monospace;font-size:0.78rem;color:var(--muted)">${escHtml(it.id)}</td><td>${escHtml(it.name || it.id)}</td><td class="num" style="color:${daysColor};font-weight:600">${it.lastModStr || ''}</td><td class="num" style="color:${daysColor};font-weight:700">${fmtN(it.daysSince)}</td><td class="num" style="color:var(--orange);font-weight:700">${it.inflPct ? '+'+it.inflPct+'%' : ''}</td><td class="num">${fmt$(it.price)}</td><td class="num" style="color:var(--primary);font-weight:700">${fmt$(it.suggested)}</td><td class="num" style="color:${gapColor};font-weight:700">+${fmt$(it.delta)}</td><td class="num">${usageStr}</td><td class="num">${upliftStr}</td></tr>`;
+ }).join('');
+}
+
+async function buildC2() {
+  const data = await campaignFetch('99-pricing');
+  const items = data.items || [];
+  c2AllItems = items;
+  window.c2Items = items; // for campaign tracking
+  c2AllItems = items;
+  window.c2Items = items; // for campaign tracking
+
+  const grandUplift = items.reduce((s, i) => s + (i.uplift || 0), 0);
+  const grandVolume = items.reduce((s, i) => s + (i.volume || 0), 0);
+
+  document.getElementById('c2Badge').textContent = `${fmt$(grandUplift)} missed last year`;
+  document.getElementById('c2Summary').innerHTML = `
+<div class="stat-bar-item"><div class="stat-bar-label">Missed Revenue</div><div class="stat-bar-value" style="color:var(--purple)">${fmt$(grandUplift)}</div><div class="stat-bar-sub">if all adjusted to .99</div></div><div class="stat-bar-item"><div class="stat-bar-label">Affected Services</div><div class="stat-bar-value">${items.length}</div><div class="stat-bar-sub">not at .99 pricing</div></div><div class="stat-bar-item"><div class="stat-bar-label">Total Transactions</div><div class="stat-bar-value">${fmtN(Math.round(grandVolume))}</div><div class="stat-bar-sub">units across affected items</div></div><div class="stat-bar-item"><div class="stat-bar-label">Avg Gain / Unit</div><div class="stat-bar-value">${grandVolume > 0 ? fmt$(grandUplift / grandVolume) : ''}</div><div class="stat-bar-sub">across all affected items</div></div>
+  `;
+
+  window._c2Uplift = grandUplift; refreshUpliftBoard();
+  document.getElementById('c2Table').innerHTML = items.slice(0, 100).map(it => `<tr><td>${escHtml(it.service)}</td><td class="muted">${escHtml(it.category || '')}</td><td class="num">${fmt$(it.currentPrice)}</td><td class="num blue">${fmt$(it['99Price'])}</td><td class="num" style="color:var(--purple);font-weight:700">+${fmt$(it.gainPerTxn)}</td><td class="num">${fmtN(Math.round(it.volume || 0))}</td><td class="num green" style="font-weight:700">+${fmt$(it.uplift)}</td></tr>`).join('');
+}
+
+async function buildC3() {
+  const data = await campaignFetch('micro-margin');
+  const items = data.items || [];
+  c3AllItems = items;
+  window.c3Items = items; // for campaign tracking
+
+  const totalUplift = items.reduce((s, it) => s + (it.annualUplift || 0), 0);
+  const totalQty = items.reduce((s, it) => s + (it.annualQty || 0), 0);
+
+  document.getElementById('c3Badge').textContent = `${items.length} items with recent price increases`;
+  document.getElementById('c3Summary').innerHTML = `<div class="stat-bar-item"><div class="stat-bar-label">Extra Annual Margin</div><div class="stat-bar-value" style="color:var(--green)">+${fmt$(totalUplift)}</div><div class="stat-bar-sub">captured by bumping recent increases +5%</div></div><div class="stat-bar-item"><div class="stat-bar-label">Items Qualifying</div><div class="stat-bar-value">${items.length}</div><div class="stat-bar-sub">recent increase detected + &gt;5 units/yr</div></div><div class="stat-bar-item"><div class="stat-bar-label">Avg Extra / Unit</div><div class="stat-bar-value" style="color:var(--emerald)">${totalQty > 0 ? fmt$(totalUplift / totalQty) : ''}</div><div class="stat-bar-sub">additional margin per unit sold</div></div>`;
+  window._c3Uplift = totalUplift; refreshUpliftBoard();
+  document.getElementById('c3Table').innerHTML = items.map(it =>
+    `<tr><td>${escHtml(it.name)}</td><td class="num orange">${fmt$(it.costIncrease)} <span class="muted" style="font-weight:400">(${fmt$(it.oldCost)}${fmt$(it.newCost)})</span></td><td class="num">${fmt$(it.newCost)}  <span style="color:var(--emerald);font-weight:700">${fmt$(it.priceWithBump)}</span></td><td class="num">${fmtN(Math.round(it.annualQty || 0))}</td><td class="num green" style="font-weight:700">+${fmt$(it.annualUplift)}</td></tr>`
+  ).join('');
+}
+
+function refreshUpliftBoard() {
+  var c1 = window._c1Uplift || 0;
+  var c2 = window._c2Uplift || 0;
+  var c3 = window._c3Uplift || 0;
+  var annual = c1 + c2 + c3;
+  var avg = window._avgLineAmount || 0;
+  var baselineMonthly = window._baselineMonthly || 0;
+  var campaignMonth = Math.round(annual / 12);
+  
+  function set(id, val) { var el = document.getElementById(id); if (el) el.textContent = val; }
+  // Fill new KPI cards
+  // Yesterday's revenue
+  const yesterday = new Date(); yesterday.setDate(yesterday.getDate()-1);
+  const yesterdayStr = yesterday.toISOString().split('T')[0];
+  const yesterdayRows = serviceData.filter(r => r.txn_date === yesterdayStr);
+  // Will be filled from std_service_daily below
+
+  // ub-captured-month is set by loadCapturedRevenue() from actual implemented items
+  set('ub-avg-txn', avg > 0 ? fmt$(avg) : '--');
+  set('ub-c1', c1 > 0 ? fmt$(c1) + '/yr' : '--');
+  set('ub-c2', c2 > 0 ? fmt$(c2) + '/yr' : '--');
+  set('ub-c3', c3 > 0 ? fmt$(c3) + '/yr' : '--');
+  
+  loadCapturedRevenue();
+  buildAvgTxnChart();
+}
+
+async function loadCapturedRevenue() {
+  try {
     const res = await fetch(`${SB_URL}/rest/v1/std_approval_queue?select=expected_annual_uplift,created_at&status=eq.approved&clinic_id=eq.rosslyn`, {
       headers: { apikey: SB_KEY, Authorization: 'Bearer ' + SB_KEY }
     });
