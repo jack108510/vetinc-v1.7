@@ -1703,14 +1703,14 @@ async function loadDataAndBuild() {
    microMarginData = mmRows;
    
    // Load service catalog from std_services (no unit_cost available)
-   const itemRows = await sbFetchAll('std_services', 'select=service_code,name,category&clinic_id=eq.rosslyn');
+   const itemRows = await sbFetchAll('std_services', 'select=code,name,category&clinic_id=eq.rosslyn');
    const inventoryItems = []; // std_services has no unit_cost; skip COGS calculation
    
    // Build inventory usage from serviceData + items
    const invMap = {};
    for (const item of inventoryItems) {
-     if (!invMap[item.service_code]) invMap[item.service_code] = [];
-     invMap[item.service_code].push(item);
+     if (!invMap[item.code]) invMap[item.code] = [];
+     invMap[item.code].push(item);
    }
    const invUsage = [];
    for (const svc of serviceData || []) {
