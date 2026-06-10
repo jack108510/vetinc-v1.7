@@ -1667,6 +1667,7 @@ window.addEventListener("DOMContentLoaded", function(){
 });
 
 async function loadDataAndBuild() {
+  dbg("loadDataAndBuild START");
  try {
    const svcRows = await (async () => {
       const resp = await fetch(SB_URL + '/rest/v1/std_service_daily?select=service_code,revenue,quantity,transactions&clinic_id=eq.rosslyn', {headers:{'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY}});
@@ -1745,16 +1746,19 @@ async function loadDataAndBuild() {
    if(dp) dp.classList.add('loaded');
    buildAnalytics();
  } catch(e) {
-   console.error(' Data load error:', e);
+   console.error('Data load error:', e); dbg('DATA LOAD ERROR: ' + e.message + ' | ' + e.stack);
    const el = document.getElementById('campaignsLoading');
    if (el) el.innerHTML = '<div style="color:var(--red);padding:2rem;font-size:0.85rem"><strong>Data Load Error:</strong><br/>' + e.toString() + '</div>';
  }
 }
 
+dbg("calling loadDataAndBuild");
 loadDataAndBuild().then(() => {
+  dbg("loadDataAndBuild DONE, services=" + (serviceData||[]).length);
   var kpiLabel = document.getElementById('kpiDateLabel');
   if (kpiLabel) kpiLabel.textContent = 'All time';
   document.getElementById('lastUpdated').textContent = 'Loaded ' + (serviceData||[]).length.toLocaleString() + ' services';
+  dbg("calling buildCampaigns");
   return buildCampaigns();
 }).catch(e => {
   console.error(' Campaign init error:', e);
@@ -2040,11 +2044,13 @@ async function buildC3() {
 }
 
 function refreshUpliftBoard() {
+  dbg("refreshUpliftBoard called");
   loadCapturedRevenue();
   buildAvgTxnChart();
 }
 
 async function loadCapturedRevenue() {
+  dbg("loadCapturedRevenue START");
   try {
     // Single source: std_daily_kpis
     const res = await fetch(`${SB_URL}/rest/v1/std_daily_kpis?clinic_id=eq.rosslyn&order=day.desc&limit=90`, {
@@ -2115,7 +2121,7 @@ async function loadCapturedRevenue() {
     document.getElementById('ub-profit-margin').textContent = '--';
 
   } catch(e) {
-    console.error('Failed to load KPIs:', e);
+    console.error('Failed to load KPIs:', e); dbg('KPI ERROR: ' + e.message);
   }
 }!DOCTYPE html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>Vet INC - Business Dashboard</title><link rel="icon" href="data:," /><script src="https://cdn.jsdelivr.net/npm/chart.js"></script><style>
  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -3190,5 +3196,19 @@ async function loadCapturedRevenue() {
 .modal-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:14px}
 .modal-actions .secondary{background:#e2e8f0;color:#0f172a}
 .modal-actions .primary{background:var(--primary);color:#fff}
+
+<div id="debugBanner" style="position:fixed;bottom:0;left:0;right:0;background:#111;color:#0f0;font-family:monospace;font-size:11px;padding:8px 12px;z-index:99999;max-height:200px;overflow-y:auto;white-space:pre-wrap;display:none"></div>
+<script>
+window._log = [];
+function dbg(msg) {
+  window._log.push(msg);
+  const el = document.getElementById('debugBanner');
+  if (el) { el.style.display = 'block'; el.textContent = window._log.join('\n'); el.scrollTop = el.scrollHeight; }
+}
+window.onerror = function(m,s,l,c,e) { dbg('ERROR: ' + m + ' (line ' + l + ')'); };
+window.addEventListener('unhandledrejection', function(e) { dbg('PROMISE REJECT: ' + (e.reason?.message||e.reason)); });
+dbg('Page loaded: ' + new Date().toISOString());
+</script>
+
 </body>
 </html>
