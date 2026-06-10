@@ -8451,28 +8451,4 @@ ${summaryCards}
 </div>
 <table><thead>${thRow}</thead><tbody>${bodyRows}</tbody></table>
 <div style="margin-top:16px;font-size:.7rem;color:#94a3b8">Vet INC | Powered by Wilde Automations</div>
-</body></html>`;
-
-  const win = window.open('','_blank');
-  win.document.write(html);
-  win.document.close();
-  setTimeout(() => { win.print(); }, 500);
-}
-function closeImplement(){
-  const m=document.getElementById('implementModal');
-  if(m) m.style.display='none';
-}
-</script><script src="js/insightsEngine.js"></script><script src="js/healthWidget.js"></script><script>
-// Hook insights loading into tab switches
-(function(){
-  var _origShowTab = window.showTab;
-  window.showTab = function(name, btn) {
-    _origShowTab(name, btn);
-    if (name === 'insights') InsightsEngine.load();
-  };
-  document.addEventListener('DOMContentLoaded', function() {
-    setTimeout(function() { InsightsEngine.load(); }, 2000);
-  });
-})();
-</script>
 </body></html>
