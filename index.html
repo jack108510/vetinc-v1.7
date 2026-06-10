@@ -2040,28 +2040,6 @@ async function buildC3() {
 }
 
 function refreshUpliftBoard() {
-  var c1 = window._c1Uplift || 0;
-  var c2 = window._c2Uplift || 0;
-  var c3 = window._c3Uplift || 0;
-  var annual = c1 + c2 + c3;
-  var avg = window._avgLineAmount || 0;
-  var baselineMonthly = window._baselineMonthly || 0;
-  var campaignMonth = Math.round(annual / 12);
-  
-  function set(id, val) { var el = document.getElementById(id); if (el) el.textContent = val; }
-  // Fill new KPI cards
-  // Yesterday's revenue
-  const yesterday = new Date(); yesterday.setDate(yesterday.getDate()-1);
-  const yesterdayStr = yesterday.toISOString().split('T')[0];
-  const yesterdayRows = serviceData.filter(r => r.txn_date === yesterdayStr);
-  // Will be filled from std_service_daily below
-
-  // ub-captured-month is set by loadCapturedRevenue() from actual implemented items
-  set('ub-avg-txn', avg > 0 ? fmt$(avg) : '--');
-  set('ub-c1', c1 > 0 ? fmt$(c1) + '/yr' : '--');
-  set('ub-c2', c2 > 0 ? fmt$(c2) + '/yr' : '--');
-  set('ub-c3', c3 > 0 ? fmt$(c3) + '/yr' : '--');
-  
   loadCapturedRevenue();
   buildAvgTxnChart();
 }
