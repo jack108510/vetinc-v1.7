@@ -1250,7 +1250,8 @@
       <div class="progress-bar-wrap"><div class="progress-bar"><div class="fill" id="c2ProgressFill" style="width:0%"></div></div></div>
       <div class="progress-label" id="c2ProgressLabel">0/0 implemented</div>
       <button class="btn-analytics" onclick="openCampaignAnalytics('99-pricing')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg> Analytics</button>
-     </div></div></div><!-- Summary stat bar --><div id="c2Summary" style="display:flex;gap:2rem;padding:1rem 1.75rem;border-bottom:1px solid var(--border);background:#f8faff;flex-wrap:wrap"></div><button class="campaign-toggle" onclick="toggleCampaign(this)">See More <span class="toggle-arrow">&#9662;</span></button><div class="campaign-body"><div class="table-scroll"><table><thead><tr><th>Service / Item</th><th>Category</th><th class="num">Current Price</th><th class="num">.99 Price</th><th class="num">Gain / Txn</th><th class="num">Annual Volume</th><th class="num">Annual Uplift</th></tr></thead><tbody id="c2Table"></tbody></table></div></div></div><!-- Campaign 3: Inventory Micro Margin --><div class="campaign-card c-emerald"><div class="campaign-header"><div class="campaign-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg></div><div class="campaign-meta"><div class="campaign-title">Inventory Micro Margin</div><div class="campaign-desc">Inventory items (drugs, supplies) with price changes in the last 365 days. When a supplier raises costs and you update the selling price, add an extra 5% margin bump. Shows units sold since the price change and what the extra margin would have been.</div><div class="campaign-status" id="c3Status">
+     </div></div></div><!-- Summary stat bar --><div style="display:flex;justify-content:flex-end;padding:0.5rem 1.75rem"><button class="btn-activate primary" onclick="approveAll99()" style="padding:6px 20px">Approve All 99-Cent Changes</button></div>
+<div id="c2Summary" style="display:flex;gap:2rem;padding:1rem 1.75rem;border-bottom:1px solid var(--border);background:#f8faff;flex-wrap:wrap"></div><button class="campaign-toggle" onclick="toggleCampaign(this)">See More <span class="toggle-arrow">&#9662;</span></button><div class="campaign-body"><div class="table-scroll"><table><thead><tr><th>Service / Item</th><th>Category</th><th class="num">Current Price</th><th class="num">.99 Price</th><th class="num">Gain / Txn</th><th class="num">Annual Volume</th><th class="num">Annual Uplift</th></tr></thead><tbody id="c2Table"></tbody></table></div></div></div><!-- Campaign 3: Inventory Micro Margin --><div class="campaign-card c-emerald"><div class="campaign-header"><div class="campaign-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg></div><div class="campaign-meta"><div class="campaign-title">Inventory Micro Margin</div><div class="campaign-desc">Inventory items (drugs, supplies) with price changes in the last 365 days. When a supplier raises costs and you update the selling price, add an extra 5% margin bump. Shows units sold since the price change and what the extra margin would have been.</div><div class="campaign-status" id="c3Status">
       <span class="campaign-badge" id="c3Badge" style="display:none"></span><div class="badge inactive" id="c3StatusBadge"><span>&#9679;</span> Not Started</div>
       <button class="btn-activate primary" id="c3ActivateBtn" onclick="activateCampaign('micro-margin')">Start Campaign</button>
       <button class="implement-btn" onclick="openCampaignImplement('micro-margin')" style="margin-left:8px">Implement Campaign</button>
@@ -2024,6 +2025,7 @@ async function buildC2() {
       '<div class="stat-bar-item"><div class="stat-bar-label">Implemented</div><div class="stat-bar-value" style="color:var(--green)">' + implemented.length + '</div><div class="stat-bar-sub">active price changes</div></div>' +
       '<div class="stat-bar-item"><div class="stat-bar-label">Implemented Uplift</div><div class="stat-bar-value" style="color:var(--green)">$' + Math.round(implementedUplift).toLocaleString() + '/yr</div><div class="stat-bar-sub">confirmed revenue</div></div>';
 
+    window._c2Pending = pending.length;
     var table = document.getElementById('c2Table');
     if (table) table.innerHTML = pending.map(it => 
       '<tr>' +
@@ -2066,6 +2068,20 @@ async function buildC3() {
 }
 
 
+
+
+async function approveAll99() {
+  if (!confirm('Approve all 99-cent pricing changes? This will update ' + (window._c2Pending || 0) + ' items.')) return;
+  try {
+    const res = await fetch(SB_URL + '/rest/v1/std_approval_queue?clinic_id=eq.rosslyn&strategy=eq.price_ending&status=eq.pending', {
+      method: 'PATCH',
+      headers: { apikey: SB_KEY, Authorization: 'Bearer ' + SB_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'implemented' })
+    });
+    if (!res.ok) throw new Error('Failed: ' + res.status);
+    buildC2();
+  } catch(e) { alert('Error: ' + e.message); }
+}
 
 async function approveItem(queueId) {
   try {
