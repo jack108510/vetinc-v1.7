@@ -1240,7 +1240,8 @@
       <div class="progress-bar-wrap"><div class="progress-bar"><div class="fill" id="c1ProgressFill" style="width:0%"></div></div></div>
       <div class="progress-label" id="c1ProgressLabel">0/0 implemented</div>
       <button class="btn-analytics" onclick="openCampaignAnalytics('inflation')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg> Analytics</button>
-     </div></div></div><div id="c1Summary" style="display:flex;gap:2rem;padding:1rem 1.75rem;border-bottom:1px solid var(--border);background:#f8faff;flex-wrap:wrap"></div><button class="campaign-toggle" onclick="toggleCampaign(this)">See More <span class="toggle-arrow">&#9662;</span></button><div class="campaign-body"><div style="padding:0.6rem 1.75rem;border-bottom:1px solid var(--border);display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap"><span style="font-size:0.72rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-right:0.5rem">Show:</span><button class="c1-filter active" onclick="c1Filter(this,'all')">All Behind</button><button class="c1-filter" onclick="c1Filter(this,'used')">With Usage Only</button><button class="c1-filter" onclick="c1Filter(this,'urgent')">Urgent (&gt;15%)</button></div><div class="table-scroll"><table><thead><tr><th>Code</th><th>Description</th><th class="num">Last Changed</th><th class="num">Days Stale</th><th class="num">Infl. %</th><th class="num">Current Price</th><th class="num">Suggested Price</th><th class="num">Delta</th><th class="num">Usage / yr</th><th class="num">Est. Uplift / yr</th></tr></thead><tbody id="c1Table"></tbody></table></div></div></div><!-- Campaign 2: .99 Pricing Opportunity --><div class="campaign-card c-purple"><div class="campaign-header"><div class="campaign-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M16 8h-6a2 2 0 100 4h4a2 2 0 110 4H8"/><path d="M12 6v2m0 8v2"/></svg></div><div class="campaign-meta"><div class="campaign-title">.99 Pricing Revenue Recovery</div><div class="campaign-desc">Based on actual transaction history: if every line item that <em>wasn't</em> already at a .99 price had been rounded up to the next .99, how much additional revenue would the clinic have captured last year? This shows real missed dollars &mdash; not theory.</div><div class="campaign-status" id="c2Status">
+     </div></div></div><div style="display:flex;justify-content:flex-end;padding:0.5rem 1.75rem"><button class="btn-activate primary" onclick="approveAllInflation()" style="padding:6px 20px">Approve All Inflation Adjustments</button></div>
+<div id="c1Summary" style="display:flex;gap:2rem;padding:1rem 1.75rem;border-bottom:1px solid var(--border);background:#f8faff;flex-wrap:wrap"></div><button class="campaign-toggle" onclick="toggleCampaign(this)">See More <span class="toggle-arrow">&#9662;</span></button><div class="campaign-body"><div style="padding:0.6rem 1.75rem;border-bottom:1px solid var(--border);display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap"><span style="font-size:0.72rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-right:0.5rem">Show:</span><button class="c1-filter active" onclick="c1Filter(this,'all')">All Behind</button><button class="c1-filter" onclick="c1Filter(this,'used')">With Usage Only</button><button class="c1-filter" onclick="c1Filter(this,'urgent')">Urgent (&gt;15%)</button></div><div class="table-scroll"><table><thead><tr><th>Code</th><th>Description</th><th class="num">Last Changed</th><th class="num">Days Stale</th><th class="num">Infl. %</th><th class="num">Current Price</th><th class="num">Suggested Price</th><th class="num">Delta</th><th class="num">Usage / yr</th><th class="num">Est. Uplift / yr</th></tr></thead><tbody id="c1Table"></tbody></table></div></div></div><!-- Campaign 2: .99 Pricing Opportunity --><div class="campaign-card c-purple"><div class="campaign-header"><div class="campaign-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M16 8h-6a2 2 0 100 4h4a2 2 0 110 4H8"/><path d="M12 6v2m0 8v2"/></svg></div><div class="campaign-meta"><div class="campaign-title">.99 Pricing Revenue Recovery</div><div class="campaign-desc">Based on actual transaction history: if every line item that <em>wasn't</em> already at a .99 price had been rounded up to the next .99, how much additional revenue would the clinic have captured last year? This shows real missed dollars &mdash; not theory.</div><div class="campaign-status" id="c2Status">
       <span class="campaign-badge" id="c2Badge" style="display:none"></span><div class="badge inactive" id="c2StatusBadge"><span>&#9679;</span> Not Started</div>
       <button class="btn-activate primary" id="c2ActivateBtn" onclick="activateCampaign('99-pricing')">Start Campaign</button>
       <button class="implement-btn" onclick="openCampaignImplement('99-pricing')" style="margin-left:8px">Implement Campaign</button>
@@ -1940,33 +1941,48 @@ Object.assign(CPI_RATES, {
 
 async function buildC1() {
   try {
-  const data = await campaignFetch('inflation');
-  const items = (data.items || []).map(it => {
-    const gapPct = it.currentPrice > 0 ? it.delta / it.currentPrice : 0;
-    return { ...it, price: it.currentPrice, gap: it.delta, gapPct,
-      status_flag: gapPct > 0.15 ? 'urgent' : gapPct > 0.04 ? 'behind' : 'low' };
-  });
-  c1AllItems = items;
-  window.c1Items = items; // for campaign tracking
+    const res = await fetch(SB_URL + '/rest/v1/std_approval_queue?select=id,service_code,service_name,old_price,suggested_price,price_increase_pct,expected_monthly_uplift,expected_annual_uplift,volume_risk,status,priority&clinic_id=eq.rosslyn&strategy=eq.inflation_catchup&order=expected_annual_uplift.desc&limit=500', {
+      headers: { apikey: SB_KEY, Authorization: 'Bearer ' + SB_KEY }
+    });
+    if (!res.ok) throw new Error('Failed: ' + res.status);
+    const items = await res.json();
 
-  const withUsage = items.filter(i => (i.usage || 0) > 0);
-  const usageUplift = withUsage.reduce((s, i) => s + (i.uplift || 0), 0);
-  const urgent = items.filter(i => i.status_flag === 'urgent');
-  const maxDays = items.length ? items.reduce((m, i) => Math.max(m, i.daysSince || 0), 0) : 0;
-  const avgDays = items.length ? Math.round(items.reduce((s, i) => s + (i.daysSince || 0), 0) / items.length) : 0;
+    const pending = items.filter(i => i.status === 'pending');
+    const implemented = items.filter(i => i.status === 'implemented');
+    const totalUplift = pending.reduce((s, i) => s + (parseFloat(i.expected_annual_uplift) || 0), 0);
+    const implementedUplift = implemented.reduce((s, i) => s + (parseFloat(i.expected_annual_uplift) || 0), 0);
+    const urgent = pending.filter(i => (parseFloat(i.price_increase_pct) || 0) > 15);
 
-  document.getElementById('c1Badge').textContent =
-    `${items.length} items behind inflation  ${fmt$(usageUplift)} confirmed annual uplift`;
+    var badge = document.getElementById('c1Badge');
+    if (badge) badge.textContent = pending.length + ' items behind inflation  |  $' + Math.round(totalUplift).toLocaleString() + '/yr potential';
 
-  document.getElementById('c1Summary').innerHTML = `
-<div class="stat-bar-item"><div class="stat-bar-label">Confirmed Annual Uplift</div><div class="stat-bar-value" style="color:var(--green)">${fmt$(usageUplift)}</div><div class="stat-bar-sub">items with real usage  delta</div></div><div class="stat-bar-item"><div class="stat-bar-label">Items Behind Inflation</div><div class="stat-bar-value">${items.length}</div><div class="stat-bar-sub">${withUsage.length} with recent usage</div></div><div class="stat-bar-item"><div class="stat-bar-label">Urgent (&gt;15% gap)</div><div class="stat-bar-value" style="color:var(--red)">${urgent.length}</div><div class="stat-bar-sub">immediate review needed</div></div><div class="stat-bar-item"><div class="stat-bar-label">Oldest Stale Price</div><div class="stat-bar-value" style="color:var(--orange)">${Math.round(maxDays / 365.25)} yrs</div><div class="stat-bar-sub">since last price change</div></div><div class="stat-bar-item"><div class="stat-bar-label">Avg Days Stale</div><div class="stat-bar-value" style="color:var(--purple)">${fmtN(avgDays)}</div><div class="stat-bar-sub">avg since last price change</div></div>
-  `;
+    var summary = document.getElementById('c1Summary');
+    if (summary) summary.innerHTML = 
+      '<div class="stat-bar-item"><div class="stat-bar-label">Annual Potential</div><div class="stat-bar-value" style="color:var(--green)">$' + Math.round(totalUplift).toLocaleString() + '</div><div class="stat-bar-sub">total inflation catchup</div></div>' +
+      '<div class="stat-bar-item"><div class="stat-bar-label">Pending Items</div><div class="stat-bar-value">' + pending.length + '</div><div class="stat-bar-sub">awaiting review</div></div>' +
+      '<div class="stat-bar-item"><div class="stat-bar-label">Urgent (&gt;15%)</div><div class="stat-bar-value" style="color:var(--red)">' + urgent.length + '</div><div class="stat-bar-sub">immediate review</div></div>' +
+      '<div class="stat-bar-item"><div class="stat-bar-label">Implemented</div><div class="stat-bar-value" style="color:var(--green)">$' + Math.round(implementedUplift).toLocaleString() + '/yr</div><div class="stat-bar-sub">confirmed revenue</div></div>';
 
-  window._c1Uplift = usageUplift; refreshUpliftBoard();
-  c1Render('all');
+    var table = document.getElementById('c1Table');
+    if (table) table.innerHTML = pending.map(it => 
+      '<tr>' +
+      '<td>' + escHtml(it.service_code || '') + '</td>' +
+      '<td>' + escHtml(it.service_name || '') + '</td>' +
+      '<td class="num">$' + (parseFloat(it.old_price) || 0).toFixed(2) + '</td>' +
+      '<td class="num" style="color:var(--orange);font-weight:700">+' + (parseFloat(it.price_increase_pct) || 0).toFixed(1) + '%</td>' +
+      '<td class="num" style="color:var(--primary);font-weight:700">$' + (parseFloat(it.suggested_price) || 0).toFixed(2) + '</td>' +
+      '<td class="num green" style="font-weight:700">$' + Math.round(parseFloat(it.expected_annual_uplift) || 0).toLocaleString() + '/yr</td>' +
+      '<td><button class="btn-activate primary" style="padding:2px 10px;font-size:0.75rem" onclick="approveItem(' + it.id + ')">Approve</button> <button class="btn-activate" style="padding:2px 10px;font-size:0.75rem;color:var(--red)" onclick="dismissItem(' + it.id + ')">Dismiss</button></td>' +
+      '</tr>'
+    ).join('');
+
+    window._c1Uplift = totalUplift;
+    if (typeof refreshUpliftBoard === 'function') refreshUpliftBoard();
+
   } catch(e) {
     console.error('C1 error:', e);
-    document.getElementById('c1Table').innerHTML = `<tr><td colspan="10" style="color:var(--red)">Error: ${e.message}</td></tr>`;
+    var table = document.getElementById('c1Table');
+    if (table) table.innerHTML = '<tr><td colspan="7" style="color:var(--red)">Error: ' + e.message + '</td></tr>';
   }
 }
 
@@ -2080,6 +2096,20 @@ async function approveAll99() {
     });
     if (!res.ok) throw new Error('Failed: ' + res.status);
     buildC2();
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+
+async function approveAllInflation() {
+  if (!confirm('Approve all inflation price adjustments?')) return;
+  try {
+    const res = await fetch(SB_URL + '/rest/v1/std_approval_queue?clinic_id=eq.rosslyn&strategy=eq.inflation_catchup&status=eq.pending', {
+      method: 'PATCH',
+      headers: { apikey: SB_KEY, Authorization: 'Bearer ' + SB_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'implemented' })
+    });
+    if (!res.ok) throw new Error('Failed: ' + res.status);
+    buildC1();
   } catch(e) { alert('Error: ' + e.message); }
 }
 
